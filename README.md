@@ -15,7 +15,17 @@ A multiplayer bomb-defusal prototype about relaying information under constraint
 
 Each role has a genuine information constraint and a genuine piece of expertise the others need — nobody can solve the bomb alone. The server never sends a role information it isn't entitled to see (each SSE connection gets a role-filtered view, not the full room state).
 
-Puzzles are randomized per round across five variants (exact cut order, color grouping, color exclusion, position parity, shape pairing), with a synced countdown and a 3-strike limit. Difficulty escalates with each win in a room: wire count grows from 5 up to 8, the timer shrinks from 90s down to a 60s floor, and the two more demanding variants (position parity, color exclusion) only enter the pool from round 3 onward. A loss resets the room back to round 1.
+Each round mounts 2 modules on 2 random distinct faces of the same cube, picked from:
+
+- **Wire Cut** — a row of 5-8 wires; cut the set/order described by the rule (exact order, color grouping, color exclusion, position parity, shape pairing).
+- **Handshake Grid** — a 3x3 or 4x4 grid of nodes; press the set described by the rule (a row, column, diagonal, color group, or matching shape pair).
+- **Frequency Lock** — a rotary dial with a visible channel key; tune the needle into the target band (the key's parity decides which half of the dial to aim for) and lock it in.
+
+Both modules must be solved to win. The Blind Operator gets a single rotatable 3D cube with both modules mounted on their assigned faces — they have to rotate to find the second one, like a real multi-module bomb. Wires/nodes are neutral gray, distinguished only by shape, never color. A real accessible control (hidden button, or a visible slider for the dial) always exists per module alongside the 3D view, so the game is fully playable by keyboard/screen reader too.
+
+Every module shares the same failure pressure: a synced countdown and a **containment spread meter** instead of flat strikes. Each wrong action adds 14-21% spread and docks 8 seconds off the clock; hitting 100% is a "quarantine breach" (loss). Once spread crosses 50%, the ruleset shifts once — an extra wire/node gets added to the target set, a wire sequence reverses, or the frequency band drifts — visible immediately to sighted roles, felt by the Operator only as a suddenly-harder puzzle.
+
+Difficulty escalates with each win in a room: wire/grid size grows, the timer shrinks toward a 60s floor, and more demanding variants unlock from round 3 onward. A loss resets the room back to round 1.
 
 ## Run locally
 

@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Relay Protocol — Signal Quarantine 3D Prototype</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --border: #30363d;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --accent: #58a6ff;
+    --danger: #f85149;
+    --ok: #3fb950;
+    --warn: #d29922;
+    --font-mono: 'Share Tech Mono', ui-monospace, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font-family: var(--font-mono); }
+  #app { position: relative; width: 100%; height: 100%; }
+  canvas { display: block; touch-action: none; }
+  .hud {
+    position: absolute; top: 0; left: 0; right: 0;
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 0.75rem 1rem; pointer-events: none;
+    background: linear-gradient(to bottom, rgba(13,17,23,0.9), transparent);
+  }
+  .hud h1 { font-size: 1rem; margin: 0; letter-spacing: 0.05em; }
+  .hud .timer { font-size: 1.6rem; color: var(--warn); font-variant-numeric: tabular-nums; }
+  .status {
+    position: absolute; bottom: 0; left: 0; right: 0;
+    padding: 0.75rem 1rem; text-align: center;
+    background: linear-gradient(to top, rgba(13,17,23,0.9), transparent);
+    color: var(--muted); font-size: 0.85rem;
+  }
+  .status.win { color: var(--ok); }
+  .status.lose { color: var(--danger); }
+  .hint { color: var(--accent); }
+  .spread-hud {
+    position: absolute; top: 3rem; left: 1rem; width: 220px; pointer-events: none;
+  }
+  .spread-track {
+    height: 10px; border-radius: 999px; background: var(--panel); border: 1px solid var(--border); overflow: hidden;
+  }
+  .spread-fill {
+    height: 100%; border-radius: 999px;
+    background: linear-gradient(90deg, var(--ok), var(--warn) 60%, var(--danger));
+    width: 0%; transition: width 0.3s ease;
+  }
+  @media (prefers-reduced-motion: reduce) { .spread-fill { transition: none; } }
+  .spread-text { font-size: 0.75rem; color: var(--muted); margin-top: 0.2rem; }
+  .spread-text.breach { color: var(--danger); }
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="hud">
+    <h1>RELAY PROTOCOL // SIGNAL QUARANTINE PROTOTYPE</h1>
+    <div>
+      <span class="timer" id="timer">01:30</span>
+    </div>
+  </div>
+  <div class="spread-hud">
+    <div class="spread-track"><div class="spread-fill" id="spread-fill"></div></div>
+    <div class="spread-text" id="spread-text">Spread: 0%</div>
+  </div>
+  <div class="status" id="status">Drag to rotate the signal core. Click a wire to cut it. <span class="hint">Rule: cut the wire whose color does NOT repeat.</span></div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const app = document.getElementById('app');
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0d1117);
+
+const camera = new THREE.PerspectiveCamera(45, app.clientWidth / app.clientHeight, 0.1, 100);
+camera.position.set(2.4, 1.8, 2.4);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(app.clientWidth, app.clientHeight);
+app.appendChild(renderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.minDistance = 1.8;
+controls.maxDistance = 5;
+controls.target.set(0, 0, 0);
+
+scene.add(new THREE.AmbientLight(0x8899aa, 0.6));
+const key = new THREE.DirectionalLight(0xffffff, 1.1);
+key.position.set(3, 4, 2);
+scene.add(key);
+const rim = new THREE.DirectionalLight(0x3fb9ff, 0.4);
+rim.position.set(-3, -1, -2);
+scene.add(rim);
+
+// Bomb casing: a chamfer-ish box via slightly rounded material look (kept simple: plain box + edges)
+const casingGeo = new THREE.BoxGeometry(1.6, 1.6, 1.6);
+const casingMat = new THREE.MeshStandardMaterial({ color: 0x1c2129, roughness: 0.6, metalness: 0.4 });
+const casing = new THREE.Mesh(casingGeo, casingMat);
+scene.add(casing);
+
+const edges = new THREE.LineSegments(
+  new THREE.EdgesGeometry(casingGeo),
+  new THREE.LineBasicMaterial({ color: 0x30363d })
+);
+casing.add(edges);
+
+// --- Wire module: mounted on the +Z face ---
+// Three duplicated colors plus one unique one, so up to 6 wrong cuts are
+// possible before the puzzle is forced solved — enough room for spread to
+// actually cross the containment threshold in a losing run.
+const WIRE_COLORS = [
+  { name: 'red', hex: 0xf85149 },
+  { name: 'red', hex: 0xf85149 },
+  { name: 'yellow', hex: 0xd29922 },
+  { name: 'yellow', hex: 0xd29922 },
+  { name: 'blue', hex: 0x58a6ff },
+  { name: 'blue', hex: 0x58a6ff },
+  { name: 'green', hex: 0x3fb950 },
+];
+// shuffle so the odd-one-out isn't always the same slot
+for (let i = WIRE_COLORS.length - 1; i > 0; i--) {
+  const j = Math.floor(Math.random() * (i + 1));
+  [WIRE_COLORS[i], WIRE_COLORS[j]] = [WIRE_COLORS[j], WIRE_COLORS[i]];
+}
+const counts = {};
+WIRE_COLORS.forEach(w => counts[w.name] = (counts[w.name] || 0) + 1);
+let correctIndex = WIRE_COLORS.findIndex(w => counts[w.name] === 1);
+
+// When containment breaches, the signal fights back: the rule flips from
+// "cut the color that does NOT repeat" to "cut a color that DOES repeat" —
+// among wires not yet cut, so the puzzle stays solvable mid-round.
+function shiftContainmentRule() {
+  const hintEl = document.querySelector('.hint');
+  if (hintEl) hintEl.textContent = 'Rule SHIFTED: cut a wire whose color DOES repeat.';
+  const candidates = wireMeshes.filter(w => !w.userData.cut && counts[w.userData.colorName] > 1);
+  if (!candidates.length) return correctIndex; // no valid target left, keep prior rule
+  return candidates[Math.floor(Math.random() * candidates.length)].userData.index;
+}
+
+const moduleGroup = new THREE.Group();
+moduleGroup.position.set(0, 0, 0.801);
+casing.add(moduleGroup);
+
+const plateGeo = new THREE.PlaneGeometry(1.3, 1.3);
+const plateMat = new THREE.MeshStandardMaterial({ color: 0x11151b, roughness: 0.8 });
+const plate = new THREE.Mesh(plateGeo, plateMat);
+moduleGroup.add(plate);
+
+const wireMeshes = [];
+const wireCount = WIRE_COLORS.length;
+const spacing = 1.3 / (wireCount + 1);
+const wireRadius = 0.045;
+const wireLength = 0.88;
+WIRE_COLORS.forEach((w, i) => {
+  const x = -1.3 / 2 + spacing * (i + 1);
+  const group = new THREE.Group();
+  group.position.set(x, 0, 0.03);
+  group.rotation.z = (Math.random() - 0.5) * 0.05; // slight organic tilt, not machine-straight
+
+  // Insulation body: colored, matte/rubbery rather than shiny plastic.
+  const coreGeo = new THREE.CylinderGeometry(wireRadius, wireRadius, wireLength, 16);
+  const coreMat = new THREE.MeshStandardMaterial({ color: w.hex, roughness: 0.8, metalness: 0.05 });
+  const core = new THREE.Mesh(coreGeo, coreMat);
+  group.add(core);
+
+  // Exposed metal ends top and bottom — the detail that reads as "cut wire"
+  // rather than a plain colored dowel.
+  const capGeo = new THREE.CylinderGeometry(wireRadius * 1.2, wireRadius * 1.2, 0.05, 16);
+  const capMat = new THREE.MeshStandardMaterial({ color: 0xd7dde3, roughness: 0.25, metalness: 0.9 });
+  const capTop = new THREE.Mesh(capGeo, capMat);
+  capTop.position.y = wireLength / 2 + 0.02;
+  group.add(capTop);
+  const capBottom = new THREE.Mesh(capGeo, capMat);
+  capBottom.position.y = -(wireLength / 2 + 0.02);
+  group.add(capBottom);
+
+  core.userData = { index: i, cut: false, colorName: w.name, group };
+  moduleGroup.add(group);
+  wireMeshes.push(core);
+});
+
+// --- Containment crack overlay: wraps all six casing faces, each growing its
+// own persistent crack tree so the whole bomb reads as failing, not one panel.
+// Severity escalates with spread: more branches, thicker/brighter lines, and
+// a color shift from dull red toward white-hot as containment nears 100%.
+function lerpColor(hexA, hexB, t) {
+  const ar = (hexA >> 16) & 255, ag = (hexA >> 8) & 255, ab = hexA & 255;
+  const br = (hexB >> 16) & 255, bg = (hexB >> 8) & 255, bb = hexB & 255;
+  const r = Math.round(ar + (br - ar) * t);
+  const g = Math.round(ag + (bg - ag) * t);
+  const b = Math.round(ab + (bb - ab) * t);
+  return `rgb(${r},${g},${b})`;
+}
+
+function makeCrackFace(position, rotation) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 512;
+  canvas.height = 512;
+  const ctx = canvas.getContext('2d');
+  const texture = new THREE.CanvasTexture(canvas);
+  const mat = new THREE.MeshBasicMaterial({ map: texture, transparent: true, opacity: 0, depthWrite: false });
+  const plane = new THREE.Mesh(new THREE.PlaneGeometry(1.62, 1.62), mat);
+  plane.position.copy(position);
+  plane.rotation.copy(rotation);
+  casing.add(plane);
+
+  // Each face grows its own persistent fractal crack tree — a main crack
+  // extends outward, and branches root at points already on an existing
+  // crack (never spawned fresh from center). Branches are generation-aware
+  // and biased to root on OTHER branches, not just the main crack, so the
+  // pattern keeps forking into sub-branches instead of a single starburst —
+  // and each generation reaches a little further and canvas-clips less, so
+  // near breach the whole face is genuinely engulfed edge to edge.
+  let rng = Math.random() * 1e6;
+  const rand = () => { rng = (rng * 9301 + 49297) % 233280; return rng / 233280; };
+  const paths = [];
+  let mainPath = null;
+  const MAX_GEN = 5;
+
+  function growPath(path, segments, reach) {
+    let { x, y } = path.points[path.points.length - 1];
+    let angle = path.angle;
+    for (let s = 0; s < segments; s++) {
+      angle += (rand() - 0.5) * 1.1;
+      x += Math.cos(angle) * reach * (0.7 + rand() * 0.6);
+      y += Math.sin(angle) * reach * (0.7 + rand() * 0.6);
+      path.points.push({ x, y });
+    }
+    path.angle = angle;
+  }
+
+  function spawnBranch() {
+    // 70% of the time root on an existing branch (gen >= 1) rather than the
+    // main crack, so branches keep sprouting sub-branches as spread grows
+    // instead of everything forking off one central line.
+    const branchPaths = paths.filter((p) => p.gen >= 1 && p.gen < MAX_GEN);
+    const pool = branchPaths.length && rand() < 0.7 ? branchPaths : paths.filter((p) => p.gen < MAX_GEN);
+    const source = pool.length ? pool[Math.floor(rand() * pool.length)] : mainPath;
+    const root = source.points[Math.floor(rand() * source.points.length)];
+    const branch = { points: [{ x: root.x, y: root.y }], angle: rand() * Math.PI * 2, gen: source.gen + 1 };
+    paths.push(branch);
+    return branch;
+  }
+
+  function draw(fraction) {
+    const w = canvas.width, h = canvas.height;
+    ctx.clearRect(0, 0, w, h);
+    if (fraction <= 0) { texture.needsUpdate = true; return; }
+
+    if (!mainPath) {
+      mainPath = { points: [{ x: w / 2, y: h / 2 }], angle: rand() * Math.PI * 2, gen: 0 };
+      paths.push(mainPath);
+    }
+
+    // Reach and branch density both accelerate as spread climbs, so the last
+    // stretch toward breach visibly explodes into cracks rather than creeping.
+    const escalation = fraction * fraction * fraction; // steep cubic ramp: subtle early, engulfing late
+    const reach = 14 + escalation * 34;
+    const targetMainSegments = Math.round(4 + fraction * 26);
+    while (mainPath.points.length - 1 < targetMainSegments) growPath(mainPath, 1, reach);
+
+    const targetBranches = Math.round(3 + escalation * 55);
+    while (paths.length - 1 < targetBranches) {
+      const branch = spawnBranch();
+      growPath(branch, 2 + Math.floor(rand() * 4), reach * Math.pow(0.72, branch.gen));
+    }
+    for (const path of paths) {
+      if (path !== mainPath) growPath(path, 1, reach * Math.pow(0.72, path.gen) * 0.7);
+    }
+
+    const color = lerpColor(0x8a1f1a, 0xfff2b0, Math.min(1, fraction * 1.15));
+    for (const path of paths) {
+      const taper = Math.pow(0.78, path.gen); // deeper generations get thinner, hairline branches
+      ctx.strokeStyle = color;
+      ctx.lineWidth = Math.max(0.6, (1.6 + escalation * 6) * taper);
+      ctx.shadowColor = color;
+      ctx.shadowBlur = (5 + escalation * 44) * Math.max(0.4, taper);
+      ctx.beginPath();
+      ctx.moveTo(path.points[0].x, path.points[0].y);
+      for (let i = 1; i < path.points.length; i++) ctx.lineTo(path.points[i].x, path.points[i].y);
+      ctx.stroke();
+    }
+    texture.needsUpdate = true;
+  }
+
+  return { draw, mat };
+}
+
+const HALF = 0.805;
+const crackFaces = [
+  makeCrackFace(new THREE.Vector3(0, 0, HALF), new THREE.Euler(0, 0, 0)),           // +Z front
+  makeCrackFace(new THREE.Vector3(0, 0, -HALF), new THREE.Euler(0, Math.PI, 0)),    // -Z back
+  makeCrackFace(new THREE.Vector3(HALF, 0, 0), new THREE.Euler(0, Math.PI / 2, 0)), // +X right
+  makeCrackFace(new THREE.Vector3(-HALF, 0, 0), new THREE.Euler(0, -Math.PI / 2, 0)), // -X left
+  makeCrackFace(new THREE.Vector3(0, HALF, 0), new THREE.Euler(-Math.PI / 2, 0, 0)),  // +Y top
+  makeCrackFace(new THREE.Vector3(0, -HALF, 0), new THREE.Euler(Math.PI / 2, 0, 0)),  // -Y bottom
+];
+
+function drawCracks(fraction) {
+  for (const face of crackFaces) face.draw(fraction);
+}
+
+
+function updateSpread(pct) {
+  spread = Math.max(0, Math.min(100, pct));
+  spreadFillEl.style.width = spread + '%';
+  const breach = spread >= CONTAINMENT_THRESHOLD;
+  spreadTextEl.textContent = 'Spread: ' + Math.round(spread) + '%' + (breach ? ' — containment breached' : '');
+  spreadTextEl.classList.toggle('breach', breach);
+  const baseOpacity = Math.min(1, spread / 100 * 0.95 + (spread > 0 ? 0.15 : 0));
+  for (const face of crackFaces) face.mat.opacity = baseOpacity;
+  drawCracks(spread / 100);
+}
+
+// --- Interaction ---
+const raycaster = new THREE.Raycaster();
+const pointer = new THREE.Vector2();
+const CONTAINMENT_THRESHOLD = 50;
+let spread = 0;
+let thresholdShifted = false;
+let solved = false;
+let ended = false;
+
+const statusEl = document.getElementById('status');
+const spreadFillEl = document.getElementById('spread-fill');
+const spreadTextEl = document.getElementById('spread-text');
+const timerEl = document.getElementById('timer');
+
+function setStatus(text, cls) {
+  statusEl.textContent = text;
+  statusEl.className = 'status' + (cls ? ' ' + cls : '');
+}
+
+function onPointerDown(ev) {
+  if (ended) return;
+  const rect = renderer.domElement.getBoundingClientRect();
+  pointer.x = ((ev.clientX - rect.left) / rect.width) * 2 - 1;
+  pointer.y = -((ev.clientY - rect.top) / rect.height) * 2 + 1;
+  raycaster.setFromCamera(pointer, camera);
+  const hits = raycaster.intersectObjects(wireMeshes, false);
+  if (!hits.length) return;
+  const wire = hits[0].object;
+  if (wire.userData.cut) return;
+  cutWire(wire);
+}
+renderer.domElement.addEventListener('pointerdown', onPointerDown);
+
+function cutWire(wire) {
+  wire.userData.cut = true;
+  const group = wire.userData.group;
+  wire.visible = false; // hide the original unbroken core — replaced by two severed stubs below
+
+  const gap = 0.16;
+  const stubLen = (wireLength - gap) / 2;
+  const stubMat = wire.material.clone();
+  stubMat.color.multiplyScalar(0.55); // dimmer — a dead, cut wire
+
+  const topStub = new THREE.Mesh(new THREE.CylinderGeometry(wireRadius, wireRadius, stubLen, 16), stubMat);
+  topStub.position.y = wireLength / 2 - stubLen / 2;
+  group.add(topStub);
+
+  const bottomStub = new THREE.Mesh(new THREE.CylinderGeometry(wireRadius, wireRadius, stubLen, 16), stubMat);
+  bottomStub.position.y = -(wireLength / 2 - stubLen / 2);
+  group.add(bottomStub);
+
+  // Exposed bare-metal cut ends facing each other across the gap.
+  const cutCapGeo = new THREE.CylinderGeometry(wireRadius * 1.05, wireRadius * 1.05, 0.02, 16);
+  const cutCapMat = new THREE.MeshStandardMaterial({ color: 0xcfd8e3, roughness: 0.25, metalness: 0.9 });
+  const cutCapTop = new THREE.Mesh(cutCapGeo, cutCapMat);
+  cutCapTop.position.y = topStub.position.y - stubLen / 2 - 0.01;
+  group.add(cutCapTop);
+  const cutCapBottom = new THREE.Mesh(cutCapGeo, cutCapMat);
+  cutCapBottom.position.y = bottomStub.position.y + stubLen / 2 + 0.01;
+  group.add(cutCapBottom);
+
+  if (wire.userData.index === correctIndex) {
+    solved = true;
+    ended = true;
+    setStatus('CONTAINED. Wire ' + (correctIndex + 1) + ' (' + wire.userData.colorName + ') matched the active rule.', 'win');
+  } else {
+    const before = spread;
+    updateSpread(spread + 14 + Math.random() * 8);
+    if (before < CONTAINMENT_THRESHOLD && spread >= CONTAINMENT_THRESHOLD && !thresholdShifted) {
+      thresholdShifted = true;
+      correctIndex = shiftContainmentRule();
+    }
+    if (spread >= 100) {
+      ended = true;
+      setStatus('QUARANTINE BREACH. The signal escaped containment.', 'lose');
+    } else {
+      const shiftNote = thresholdShifted ? ' The rule has SHIFTED — re-read the wires.' : '';
+      setStatus('WRONG WIRE — spread ' + Math.round(spread) + '%.' + shiftNote);
+    }
+  }
+}
+
+// --- Timer ---
+let timeLeft = 90;
+timerEl.textContent = formatTime(timeLeft);
+function formatTime(s) {
+  const m = Math.floor(s / 60).toString().padStart(2, '0');
+  const sec = Math.floor(s % 60).toString().padStart(2, '0');
+  return m + ':' + sec;
+}
+const timerInterval = setInterval(() => {
+  if (ended) { clearInterval(timerInterval); return; }
+  timeLeft--;
+  timerEl.textContent = formatTime(Math.max(timeLeft, 0));
+  if (timeLeft <= 0) {
+    ended = true;
+    setStatus('QUARANTINE BREACH. Ran out of time.', 'lose');
+    clearInterval(timerInterval);
+  }
+}, 1000);
+
+// --- Resize ---
+window.addEventListener('resize', () => {
+  camera.aspect = app.clientWidth / app.clientHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(app.clientWidth, app.clientHeight);
+});
+
+// --- Render loop ---
+casing.rotation.y = 0.4;
+const PULSE_START = 85; // spread% at which the crack glow starts pulsing, urgency cue near breach
+function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  if (spread >= PULSE_START && !ended) {
+    const urgency = (spread - PULSE_START) / (100 - PULSE_START); // 0-1
+    const pulse = 0.75 + 0.25 * Math.sin(performance.now() * (0.006 + urgency * 0.01));
+    const base = Math.min(1, spread / 100 * 0.95 + 0.15);
+    for (const face of crackFaces) face.mat.opacity = base * pulse;
+  }
+  renderer.render(scene, camera);
+}
+animate();
+</script>
+</body>
+</html>

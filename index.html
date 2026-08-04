@@ -7,6 +7,14 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
 <style>
   :root {
     --bg: #0d1117;
@@ -106,13 +114,37 @@
     font-size: 2.2rem; font-weight: 800; text-align: center; font-variant-numeric: tabular-nums;
   }
   .timer.low { color: var(--danger); border-top: 3px solid var(--danger); padding-top: 0.3rem; }
+  .spread-track {
+    height: 10px; border-radius: 999px; background: var(--panel); border: 1px solid var(--border);
+    overflow: hidden; margin: 0.4rem 0;
+  }
+  .spread-fill {
+    height: 100%; border-radius: 999px;
+    background: linear-gradient(90deg, var(--ok), var(--warn) 60%, var(--danger));
+    transition: width 0.3s ease;
+  }
+  @media (prefers-reduced-motion: reduce) { .spread-fill { transition: none; } }
+  .spread-label { display: flex; justify-content: space-between; font-size: 0.8rem; color: var(--muted); }
+  .spread-label.breach { color: var(--danger); }
   .wire-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(90px, 1fr)); gap: 0.6rem; margin: 0.75rem 0; }
+  .bomb3d-mount {
+    width: 100%; aspect-ratio: 1 / 1; max-height: 60vh; margin: 0.75rem 0;
+    border: 2px solid var(--border); border-radius: 10px; overflow: hidden; background: #050708; touch-action: none;
+  }
+  .bomb3d-mount canvas { display: block; width: 100% !important; height: 100% !important; }
+  .bomb3d-hint { color: var(--muted); font-size: 0.8rem; text-align: center; margin: 0.2rem 0 0; }
   .wire-btn {
     aspect-ratio: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
     border: 2px solid var(--border); border-radius: 10px; background: var(--panel); color: var(--text); gap: 0.35rem;
   }
   .wire-btn[data-cut="true"] { opacity: 0.35; text-decoration: line-through; border-style: dashed; }
   .wire-shape { width: 34px; height: 34px; }
+  .freq-readout, .freq-controls {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 0.75rem; margin: 0.75rem 0;
+  }
+  .freq-readout p, .freq-controls label { margin: 0.2rem 0; }
+  .freq-controls input[type="range"] { width: 100%; margin: 0.4rem 0; }
+  .freq-controls output { display: inline-block; font-family: var(--font-mono); font-size: 1.1rem; margin-right: 0.6rem; }
   .wire-color-swatch { display: block; width: 22px; height: 22px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.4); }
   .symbol-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.5rem; }
   .symbol-btn { font-size: 1.5rem; padding: 0.6rem; }
@@ -132,6 +164,13 @@
   .visually-hidden {
     position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
   }
+  .visually-hidden-focusable {
+    position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
+  }
+  .visually-hidden-focusable:focus {
+    position: static; width: auto; height: auto; overflow: visible; clip: auto; white-space: normal;
+  }
+  .wire-grid:focus-within { position: static; }
   .conn-flag { font-size: 0.8rem; color: var(--warn); }
   .mode-note {
     background: #1c2733; border: 1px solid var(--border); border-radius: 8px;
@@ -146,7 +185,7 @@
 <body>
 <div class="wrap" id="app">
   <h1>Relay Protocol</h1>
-  <p class="tagline">A bomb-defusal relay game. No one player can see everything — say what you know.</p>
+  <p class="tagline">A signal-quarantine relay game. No one player can see everything — say what you know.</p>
   <div class="hazard-strip" role="presentation"></div>
   <div id="root" aria-live="polite"></div>
 </div>
@@ -315,7 +354,7 @@
           }).join('')}
         </div>
         ${renderPlayerStatus(view)}
-        <button id="start-btn" type="button" ${allRolesFilled(view) ? '' : 'disabled'}>Start Bomb</button>
+        <button id="start-btn" type="button" ${allRolesFilled(view) ? '' : 'disabled'}>Begin Containment</button>
         ${!allRolesFilled(view) ? '<p class="conn-flag">Waiting for every role to be filled.</p>' : ''}
       </div>
     `;
@@ -339,18 +378,71 @@
     </ul>`;
   }
 
+  const FACE_LABELS = { front: 'FRONT', back: 'BACK', left: 'LEFT', right: 'RIGHT', top: 'TOP', bottom: 'BOTTOM' };
+
   function renderTimer(view) {
     const low = view.timeRemaining <= 20;
     const m = Math.floor(view.timeRemaining / 60);
     const s = String(view.timeRemaining % 60).padStart(2, '0');
+    const breach = view.spread >= 50;
+    const progress = view.modulesTotal != null ? `Modules solved: ${view.modulesSolved}/${view.modulesTotal}` : '';
     return `<div class="timer ${low ? 'low' : ''}" role="timer" aria-label="Time remaining ${view.timeRemaining} seconds">${m}:${s}</div>
-    <p style="text-align:center;color:var(--muted)">Round ${view.round} &middot; Strikes: ${view.strikes}/3 &middot; Wires remaining: ${view.wiresRemaining}</p>`;
+    <div class="spread-track" role="progressbar" aria-label="Signal spread" aria-valuenow="${view.spread}" aria-valuemin="0" aria-valuemax="100">
+      <div class="spread-fill" style="width:${view.spread}%"></div>
+    </div>
+    <p class="spread-label ${breach ? 'breach' : ''}">Spread: ${view.spread}%${breach ? ' — containment breached, ruleset shifted' : ''}</p>
+    <p style="text-align:center;color:var(--muted)">Round ${view.round}${progress ? ' &middot; ' + progress : ''}</p>`;
+  }
+
+  // Shared read-only single-module panel used by every sighted/partial-info
+  // role. `sighted` controls whether color/target info (the "secret" the
+  // blind operator never sees) is included.
+  function renderModulePanel(mod, sighted) {
+    if (mod.moduleType === 'wire_cut') {
+      const wires = (mod.wires || []).map((w) => `
+        <div class="wire-btn" data-cut="${w.cut}" aria-label="Wire position ${w.position + 1}, ${sighted ? w.color + ' ' : ''}${w.shape}${w.cut ? ', cut' : ''}">
+          ${SHAPE_SVGS[w.shape]}
+          ${sighted ? colorSwatch(w.color) : ''}
+          <span aria-hidden="true">#${w.position + 1}</span>
+        </div>
+      `).join('');
+      return `<div class="wire-grid" role="group" aria-label="Wire panel">${wires}</div>`;
+    }
+    if (mod.moduleType === 'handshake_grid' && mod.grid) {
+      const g = mod.grid;
+      const nodes = g.nodes.map((n) => `
+        <div class="wire-btn" data-cut="${n.pressed}" aria-label="Node row ${n.row + 1} column ${n.col + 1}, ${sighted ? n.color + ' ' : ''}${n.shape}${n.pressed ? ', pressed' : ''}">
+          ${SHAPE_SVGS[n.shape]}
+          ${sighted ? colorSwatch(n.color) : ''}
+        </div>
+      `).join('');
+      return `<div class="wire-grid" role="group" aria-label="Handshake grid" style="grid-template-columns:repeat(${g.size}, 1fr)">${nodes}</div>`;
+    }
+    if (mod.moduleType === 'frequency_lock' && mod.freq) {
+      const f = mod.freq;
+      return `
+        <div class="freq-readout">
+          <p>Channel key: <strong>${f.channelLabel}</strong></p>
+          ${sighted ? `<p>Target band: <strong>${f.targetLow}&ndash;${f.targetHigh}</strong></p>` : ''}
+          <p>Current dial reading: <strong>${f.dialValue}</strong></p>
+        </div>
+      `;
+    }
+    return '';
+  }
+
+  const MODULE_NAMES = { wire_cut: 'Wire Cut', handshake_grid: 'Handshake Grid', frequency_lock: 'Frequency Lock' };
+
+  function moduleHeading(mod) {
+    const face = FACE_LABELS[mod.face] || mod.face;
+    const status = mod.solved ? ' — SOLVED' : '';
+    return `<h3>${MODULE_NAMES[mod.moduleType] || mod.moduleType} &mdash; ${face} face${status}</h3>`;
   }
 
   function renderGameScreen(view) {
     let banner = '';
-    if (view.status === 'won') banner = '<div class="banner won" role="status">Bomb defused! Great relay work.</div>';
-    if (view.status === 'lost') banner = '<div class="banner lost" role="status">Bomb detonated. Reset and try a new puzzle.</div>';
+    if (view.status === 'won') banner = '<div class="banner won" role="status">Signal contained! Great relay work.</div>';
+    if (view.status === 'lost') banner = '<div class="banner lost" role="status">Quarantine breach. Reset and try a new signal.</div>';
 
     let body = '';
     if (view.yourRole === 'blind_operator') {
@@ -375,21 +467,63 @@
     `;
   }
 
+  function renderOperatorModuleFallback(mod, view) {
+    const active = view.status === 'active' && !mod.solved;
+    if (mod.moduleType === 'wire_cut') {
+      return `<div class="wire-grid">
+        ${(mod.wires || []).map((w) => `
+          <button class="wire-btn visually-hidden-focusable" data-wire="${w.id}" data-face="${mod.face}" data-cut="${w.cut}" ${w.cut || !active ? 'disabled' : ''}
+            aria-label="${FACE_LABELS[mod.face]} face, wire position ${w.position + 1}, shape ${w.shape}${w.cut ? ', already cut' : ''}">
+            ${SHAPE_SVGS[w.shape]}
+            <span class="visually-hidden">${w.shape}</span>
+            <span aria-hidden="true">#${w.position + 1}</span>
+          </button>
+        `).join('')}
+      </div>`;
+    }
+    if (mod.moduleType === 'handshake_grid' && mod.grid) {
+      const g = mod.grid;
+      return `<div class="wire-grid" style="grid-template-columns:repeat(${g.size}, 1fr)">
+        ${g.nodes.map((n) => `
+          <button class="wire-btn visually-hidden-focusable" data-node="${n.id}" data-face="${mod.face}" data-cut="${n.pressed}" ${n.pressed || !active ? 'disabled' : ''}
+            aria-label="${FACE_LABELS[mod.face]} face, node row ${n.row + 1} column ${n.col + 1}, shape ${n.shape}${n.pressed ? ', already pressed' : ''}">
+            ${SHAPE_SVGS[n.shape]}
+            <span class="visually-hidden">${n.shape}</span>
+          </button>
+        `).join('')}
+      </div>`;
+    }
+    if (mod.moduleType === 'frequency_lock' && mod.freq) {
+      const f = mod.freq;
+      return `
+        <div class="freq-controls">
+          <label for="dial-input-${mod.face}">Dial value &mdash; channel key ${f.channelLabel}</label>
+          <input type="range" class="dial-input" id="dial-input-${mod.face}" data-face="${mod.face}" min="0" max="100" value="${f.dialValue}" ${!active ? 'disabled' : ''}>
+          <output for="dial-input-${mod.face}" class="dial-output" id="dial-output-${mod.face}">${f.dialValue}</output>
+          <button class="lock-btn" data-face="${mod.face}" type="button" ${!active ? 'disabled' : ''}>Lock In</button>
+        </div>
+      `;
+    }
+    return '';
+  }
+
   function renderBlindOperator(view) {
-    const wires = (view.wires || []).map((w) => `
-      <button class="wire-btn" data-wire="${w.id}" data-cut="${w.cut}" ${w.cut || view.status !== 'active' ? 'disabled' : ''}
-        aria-label="Wire position ${w.position + 1}, shape ${w.shape}${w.cut ? ', already cut' : ''}">
-        ${SHAPE_SVGS[w.shape]}
-        <span class="visually-hidden">${w.shape}</span>
-        <span aria-hidden="true">#${w.position + 1}</span>
-      </button>
+    const mount = `
+      <div class="bomb3d-mount" id="bomb3d-mount" role="group" aria-label="3D bomb view" aria-hidden="true"></div>
+      <p class="bomb3d-hint" aria-hidden="true">Drag to rotate — the cube has ${view.modulesTotal} modules, one per face. Click a wire, node, or dial to act on it, or use Lock In for a dial.</p>
+    `;
+    const modules = (view.modules || []).map((mod) => `
+      ${moduleHeading(mod)}
+      ${renderOperatorModuleFallback(mod, view)}
     `).join('');
+
     return `
-      <p>You cannot see color. Cut wires strictly by the instructions you're given.</p>
+      <p>You cannot see color. Act strictly on the instructions you're given.</p>
       <div class="instruction-box" aria-live="polite">
         ${view.instruction ? escapeHtml(view.instruction) : 'Waiting for an instruction from your teammate...'}
       </div>
-      <div class="wire-grid" role="group" aria-label="Bomb wires">${wires}</div>
+      ${mount}
+      ${modules}
     `;
   }
 
@@ -398,17 +532,11 @@
   }
 
   function renderRelaySpecialist(view) {
-    const wires = (view.wires || []).map((w) => `
-      <div class="wire-btn" data-cut="${w.cut}" aria-label="Wire position ${w.position + 1}, ${w.color} ${w.shape}${w.cut ? ', cut' : ''}">
-        ${SHAPE_SVGS[w.shape]}
-        ${colorSwatch(w.color)}
-        <span aria-hidden="true">#${w.position + 1}</span>
-      </div>
-    `).join('');
-    const panel = `
-      <p><strong>Rule:</strong> ${view.ruleText}</p>
-      <div class="wire-grid" role="group" aria-label="Full wire panel">${wires}</div>
-    `;
+    const panel = (view.modules || []).map((mod) => `
+      ${moduleHeading(mod)}
+      <p><strong>Rule:</strong> ${mod.ruleText}</p>
+      ${renderModulePanel(mod, true)}
+    `).join('<hr>');
     return `
       ${renderGatedPanel(view, panel)}
       ${renderInstructForm(view)}
@@ -417,16 +545,14 @@
   }
 
   function renderDeafInterpreter(view) {
-    const wires = (view.wires || []).map((w) => `
-      <div class="wire-btn" data-cut="${w.cut}" aria-label="Wire position ${w.position + 1}, shape ${w.shape}${w.cut ? ', cut' : ''}">
-        ${SHAPE_SVGS[w.shape]}
-        <span aria-hidden="true">#${w.position + 1}</span>
-      </div>
-    `).join('');
     const symLog = (view.symbolLog || []).map((e) => `<div>${escapeHtml(e.from)} sent: <strong>${escapeHtml(e.value)}</strong></div>`).join('') || '<div>No symbols received yet.</div>';
+    const panel = (view.modules || []).map((mod) => `
+      ${moduleHeading(mod)}
+      ${renderModulePanel(mod, false)}
+    `).join('');
     return `
       <p>You cannot see color or the rule. Read the incoming symbols from the Mute Clue Reader and write plain instructions for the Operator.</p>
-      <div class="wire-grid" role="group" aria-label="Wire shapes and positions (no color)">${wires}</div>
+      ${panel}
       <h3>Incoming symbols</h3>
       <div class="log" aria-live="polite">${symLog}</div>
       ${renderInstructForm(view)}
@@ -434,18 +560,12 @@
   }
 
   function renderMuteReader(view) {
-    const wires = (view.wires || []).map((w) => `
-      <div class="wire-btn" data-cut="${w.cut}" aria-label="Wire position ${w.position + 1}, ${w.color} ${w.shape}${w.cut ? ', cut' : ''}">
-        ${SHAPE_SVGS[w.shape]}
-        ${colorSwatch(w.color)}
-        <span aria-hidden="true">#${w.position + 1}</span>
-      </div>
-    `).join('');
     const symbols = (view.symbolPalette || []).map((s) => `<button class="symbol-btn" data-symbol="${s}" ${view.status !== 'active' ? 'disabled' : ''}>${s}</button>`).join('');
-    const panel = `
-      <p><strong>Rule:</strong> ${view.ruleText}</p>
-      <div class="wire-grid" role="group" aria-label="Full wire panel">${wires}</div>
-    `;
+    const panel = (view.modules || []).map((mod) => `
+      ${moduleHeading(mod)}
+      <p><strong>Rule:</strong> ${mod.ruleText}</p>
+      ${renderModulePanel(mod, true)}
+    `).join('<hr>');
     return `
       <p>You cannot type free text. Send symbols to encode the rule for your Interpreter.</p>
       ${renderGatedPanel(view, panel)}
@@ -558,7 +678,34 @@
     root.querySelectorAll('.wire-btn[data-wire]').forEach((btn) => {
       btn.addEventListener('click', async () => {
         try {
-          await api('/api/room/cut', { roomId: state.roomId, playerId: state.playerId, wireId: btn.dataset.wire });
+          await api('/api/room/cut', { roomId: state.roomId, playerId: state.playerId, wireId: btn.dataset.wire, face: btn.dataset.face });
+        } catch (e) { /* transient errors surface via next state push */ }
+      });
+    });
+    root.querySelectorAll('.wire-btn[data-node]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        try {
+          await api('/api/room/press', { roomId: state.roomId, playerId: state.playerId, nodeId: btn.dataset.node, face: btn.dataset.face });
+        } catch (e) { /* transient errors surface via next state push */ }
+      });
+    });
+    root.querySelectorAll('.dial-input').forEach((dialInput) => {
+      const face = dialInput.dataset.face;
+      const dialOutput = document.getElementById('dial-output-' + face);
+      dialInput.addEventListener('input', () => {
+        if (dialOutput) dialOutput.textContent = dialInput.value;
+      });
+      dialInput.addEventListener('change', async () => {
+        await api('/api/room/tune', { roomId: state.roomId, playerId: state.playerId, value: Number(dialInput.value), lock: false, face });
+      });
+    });
+    root.querySelectorAll('.lock-btn').forEach((lockBtn) => {
+      lockBtn.addEventListener('click', async () => {
+        const face = lockBtn.dataset.face;
+        const dialInput = document.getElementById('dial-input-' + face);
+        const value = dialInput ? Number(dialInput.value) : 0;
+        try {
+          await api('/api/room/tune', { roomId: state.roomId, playerId: state.playerId, value, lock: true, face });
         } catch (e) { /* transient errors surface via next state push */ }
       });
     });
@@ -582,6 +729,32 @@
         await api('/api/room/reset', { roomId: state.roomId, playerId: state.playerId });
       });
     }
+    const bomb3dMount = document.getElementById('bomb3d-mount');
+    if (bomb3dMount && window.RelayBomb3D) {
+      window.RelayBomb3D.sync(bomb3dMount, view, {
+        onCut: async (face, wireId) => {
+          try {
+            await api('/api/room/cut', { roomId: state.roomId, playerId: state.playerId, wireId, face });
+          } catch (e) { /* transient errors surface via next state push */ }
+        },
+        onPress: async (face, nodeId) => {
+          try {
+            await api('/api/room/press', { roomId: state.roomId, playerId: state.playerId, nodeId, face });
+          } catch (e) { /* transient errors surface via next state push */ }
+        },
+        onTune: async (face, value, lock) => {
+          try {
+            await api('/api/room/tune', { roomId: state.roomId, playerId: state.playerId, value, lock, face });
+          } catch (e) { /* transient errors surface via next state push */ }
+          if (!lock) {
+            const dialInput = document.getElementById('dial-input-' + face);
+            const dialOutput = document.getElementById('dial-output-' + face);
+            if (dialInput) dialInput.value = value;
+            if (dialOutput) dialOutput.textContent = value;
+          }
+        },
+      });
+    }
   }
 
   // ---- Boot -------------------------------------------------------------
@@ -595,6 +768,513 @@
     renderLobbyForm();
   }
 })();
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// Persistent 3D bomb view for the Blind Operator. The surrounding page does
+// a full innerHTML rebuild on every SSE tick (see render() above), which
+// would normally destroy/recreate the canvas and its WebGL context every
+// second — so scene setup happens once, and sync() just reparents the same
+// live canvas node into whatever fresh #bomb3d-mount container render()
+// produced, then updates wire/crack state to match the latest server view.
+let ctx = null; // { renderer, scene, camera, controls, casing, moduleGroup, crackFaces, drawCracks, wireIndex, onCut, lastSignature, resizeTick }
+
+function lerpColor(hexA, hexB, t) {
+  const ar = (hexA >> 16) & 255, ag = (hexA >> 8) & 255, ab = hexA & 255;
+  const br = (hexB >> 16) & 255, bg = (hexB >> 8) & 255, bb = hexB & 255;
+  const r = Math.round(ar + (br - ar) * t);
+  const g = Math.round(ag + (bg - ag) * t);
+  const b = Math.round(ab + (bb - ab) * t);
+  return `rgb(${r},${g},${b})`;
+}
+
+function makeCrackFace(casing, position, rotation) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 512;
+  canvas.height = 512;
+  const c2d = canvas.getContext('2d');
+  const texture = new THREE.CanvasTexture(canvas);
+  const mat = new THREE.MeshBasicMaterial({ map: texture, transparent: true, opacity: 0, depthWrite: false });
+  const plane = new THREE.Mesh(new THREE.PlaneGeometry(1.62, 1.62), mat);
+  plane.position.copy(position);
+  plane.rotation.copy(rotation);
+  casing.add(plane);
+
+  let rng = Math.random() * 1e6;
+  const rand = () => { rng = (rng * 9301 + 49297) % 233280; return rng / 233280; };
+  const paths = [];
+  let mainPath = null;
+  const MAX_GEN = 5;
+
+  function growPath(path, segments, reach) {
+    let { x, y } = path.points[path.points.length - 1];
+    let angle = path.angle;
+    for (let s = 0; s < segments; s++) {
+      angle += (rand() - 0.5) * 1.1;
+      x += Math.cos(angle) * reach * (0.7 + rand() * 0.6);
+      y += Math.sin(angle) * reach * (0.7 + rand() * 0.6);
+      path.points.push({ x, y });
+    }
+    path.angle = angle;
+  }
+
+  function spawnBranch() {
+    const branchPaths = paths.filter((p) => p.gen >= 1 && p.gen < MAX_GEN);
+    const pool = branchPaths.length && rand() < 0.7 ? branchPaths : paths.filter((p) => p.gen < MAX_GEN);
+    const source = pool.length ? pool[Math.floor(rand() * pool.length)] : mainPath;
+    const root = source.points[Math.floor(rand() * source.points.length)];
+    const branch = { points: [{ x: root.x, y: root.y }], angle: rand() * Math.PI * 2, gen: source.gen + 1 };
+    paths.push(branch);
+    return branch;
+  }
+
+  function draw(fraction) {
+    const w = canvas.width, h = canvas.height;
+    c2d.clearRect(0, 0, w, h);
+    if (fraction <= 0) { texture.needsUpdate = true; return; }
+    if (!mainPath) {
+      mainPath = { points: [{ x: w / 2, y: h / 2 }], angle: rand() * Math.PI * 2, gen: 0 };
+      paths.push(mainPath);
+    }
+    const escalation = fraction * fraction * fraction;
+    const reach = 14 + escalation * 34;
+    const targetMainSegments = Math.round(4 + fraction * 26);
+    while (mainPath.points.length - 1 < targetMainSegments) growPath(mainPath, 1, reach);
+    const targetBranches = Math.round(3 + escalation * 55);
+    while (paths.length - 1 < targetBranches) {
+      const branch = spawnBranch();
+      growPath(branch, 2 + Math.floor(rand() * 4), reach * Math.pow(0.72, branch.gen));
+    }
+    for (const path of paths) {
+      if (path !== mainPath) growPath(path, 1, reach * Math.pow(0.72, path.gen) * 0.7);
+    }
+    const color = lerpColor(0x8a1f1a, 0xfff2b0, Math.min(1, fraction * 1.15));
+    for (const path of paths) {
+      const taper = Math.pow(0.78, path.gen);
+      c2d.strokeStyle = color;
+      c2d.lineWidth = Math.max(0.6, (1.6 + escalation * 6) * taper);
+      c2d.shadowColor = color;
+      c2d.shadowBlur = (5 + escalation * 44) * Math.max(0.4, taper);
+      c2d.beginPath();
+      c2d.moveTo(path.points[0].x, path.points[0].y);
+      for (let i = 1; i < path.points.length; i++) c2d.lineTo(path.points[i].x, path.points[i].y);
+      c2d.stroke();
+    }
+    texture.needsUpdate = true;
+  }
+
+  return { draw, mat };
+}
+
+function buildShapeGlyph(shapeName) {
+  const size = 0.085;
+  let geo;
+  if (shapeName === 'circle') {
+    geo = new THREE.CircleGeometry(size, 24);
+  } else if (shapeName === 'square') {
+    geo = new THREE.PlaneGeometry(size * 1.6, size * 1.6);
+  } else if (shapeName === 'triangle') {
+    const s = new THREE.Shape();
+    s.moveTo(0, size * 1.1); s.lineTo(size, -size * 0.7); s.lineTo(-size, -size * 0.7); s.closePath();
+    geo = new THREE.ShapeGeometry(s);
+  } else if (shapeName === 'diamond') {
+    const s = new THREE.Shape();
+    s.moveTo(0, size * 1.15); s.lineTo(size * 1.15, 0); s.lineTo(0, -size * 1.15); s.lineTo(-size * 1.15, 0); s.closePath();
+    geo = new THREE.ShapeGeometry(s);
+  } else {
+    const s = new THREE.Shape();
+    const spikes = 5, outerR = size * 1.25, innerR = size * 0.55;
+    for (let i = 0; i < spikes * 2; i++) {
+      const r = i % 2 === 0 ? outerR : innerR;
+      const a = (Math.PI / spikes) * i - Math.PI / 2;
+      const x = Math.cos(a) * r, y = Math.sin(a) * r;
+      if (i === 0) s.moveTo(x, y); else s.lineTo(x, y);
+    }
+    s.closePath();
+    geo = new THREE.ShapeGeometry(s);
+  }
+  const mat = new THREE.MeshStandardMaterial({ color: 0xdfe4ea, roughness: 0.5, metalness: 0.1, side: THREE.DoubleSide });
+  return new THREE.Mesh(geo, mat);
+}
+
+const WIRE_RADIUS = 0.045;
+const WIRE_LENGTH = 0.88;
+
+function buildWireGroup(shape) {
+  const group = new THREE.Group();
+  group.rotation.z = (Math.random() - 0.5) * 0.05;
+
+  // The Operator is deliberately colorblind by design — insulation is neutral
+  // gray, and shape (not color) is the only thing distinguishing wires.
+  const coreMat = new THREE.MeshStandardMaterial({ color: 0x7d8590, roughness: 0.8, metalness: 0.05 });
+  const core = new THREE.Mesh(new THREE.CylinderGeometry(WIRE_RADIUS, WIRE_RADIUS, WIRE_LENGTH, 16), coreMat);
+  group.add(core);
+
+  const capMat = new THREE.MeshStandardMaterial({ color: 0xd7dde3, roughness: 0.25, metalness: 0.9 });
+  const capGeo = new THREE.CylinderGeometry(WIRE_RADIUS * 1.2, WIRE_RADIUS * 1.2, 0.05, 16);
+  const capTop = new THREE.Mesh(capGeo, capMat);
+  capTop.position.y = WIRE_LENGTH / 2 + 0.02;
+  group.add(capTop);
+  const capBottom = new THREE.Mesh(capGeo, capMat);
+  capBottom.position.y = -(WIRE_LENGTH / 2 + 0.02);
+  group.add(capBottom);
+
+  const glyph = buildShapeGlyph(shape);
+  glyph.position.set(0, 0, WIRE_RADIUS + 0.015);
+  group.add(glyph);
+
+  return { group, core, glyph };
+}
+
+function severWire(entry) {
+  const { group, core, glyph } = entry;
+  core.visible = false;
+  // The shape glyph sits at the wire's midpoint — exactly where the cut gap
+  // opens up. Left visible, it visually plugs the gap and the wire reads as
+  // still intact, so hide it once severed.
+  if (glyph) glyph.visible = false;
+  const gap = 0.16;
+  const stubLen = (WIRE_LENGTH - gap) / 2;
+  const stubMat = core.material.clone();
+  stubMat.color.multiplyScalar(0.55);
+
+  const topStub = new THREE.Mesh(new THREE.CylinderGeometry(WIRE_RADIUS, WIRE_RADIUS, stubLen, 16), stubMat);
+  topStub.position.y = WIRE_LENGTH / 2 - stubLen / 2;
+  group.add(topStub);
+  const bottomStub = new THREE.Mesh(new THREE.CylinderGeometry(WIRE_RADIUS, WIRE_RADIUS, stubLen, 16), stubMat);
+  bottomStub.position.y = -(WIRE_LENGTH / 2 - stubLen / 2);
+  group.add(bottomStub);
+
+  const cutCapGeo = new THREE.CylinderGeometry(WIRE_RADIUS * 1.05, WIRE_RADIUS * 1.05, 0.02, 16);
+  const cutCapMat = new THREE.MeshStandardMaterial({ color: 0xcfd8e3, roughness: 0.25, metalness: 0.9 });
+  const cutCapTop = new THREE.Mesh(cutCapGeo, cutCapMat);
+  cutCapTop.position.y = topStub.position.y - stubLen / 2 - 0.01;
+  group.add(cutCapTop);
+  const cutCapBottom = new THREE.Mesh(cutCapGeo, cutCapMat);
+  cutCapBottom.position.y = bottomStub.position.y + stubLen / 2 + 0.01;
+  group.add(cutCapBottom);
+}
+
+// --- Handshake grid: a wall of pressable node-buttons -----------------
+function buildNodeButton(shape) {
+  const group = new THREE.Group();
+  const baseMat = new THREE.MeshStandardMaterial({ color: 0x2a313c, roughness: 0.7, metalness: 0.2 });
+  const baseGeo = new THREE.CylinderGeometry(0.12, 0.12, 0.06, 20);
+  baseGeo.rotateX(Math.PI / 2); // rotate geometry, not mesh, so the glyph child's +z lands toward the camera
+  const base = new THREE.Mesh(baseGeo, baseMat);
+  group.add(base);
+  const glyph = buildShapeGlyph(shape);
+  glyph.position.set(0, 0, 0.035);
+  group.add(glyph);
+  return { group, base, glyph };
+}
+
+function pressNode(entry) {
+  entry.base.material.color.set(0x3fb950);
+  entry.base.material.emissive = new THREE.Color(0x1c5c2e);
+  entry.group.position.z -= 0.025;
+}
+
+// --- Frequency lock: a rotary dial with a needle and a static channel key --
+function buildDigitPlate(text) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 128;
+  canvas.height = 128;
+  const c2d = canvas.getContext('2d');
+  c2d.fillStyle = '#11151b';
+  c2d.fillRect(0, 0, 128, 128);
+  c2d.fillStyle = '#dfe4ea';
+  c2d.font = 'bold 72px monospace';
+  c2d.textAlign = 'center';
+  c2d.textBaseline = 'middle';
+  c2d.fillText(String(text), 64, 68);
+  const tex = new THREE.CanvasTexture(canvas);
+  const mat = new THREE.MeshBasicMaterial({ map: tex });
+  return new THREE.Mesh(new THREE.PlaneGeometry(0.32, 0.32), mat);
+}
+
+const DIAL_SWEEP = 2.05; // radians either side of center — ~235 degree gauge sweep
+
+function valueToAngle(value) {
+  return ((Math.max(0, Math.min(100, value)) / 100) * 2 - 1) * DIAL_SWEEP;
+}
+
+function angleToValue(angle) {
+  const clamped = Math.max(-DIAL_SWEEP, Math.min(DIAL_SWEEP, angle));
+  return Math.round(((clamped / DIAL_SWEEP) + 1) / 2 * 100);
+}
+
+function buildDialScene(freq) {
+  const discMat = new THREE.MeshStandardMaterial({ color: 0x232a35, roughness: 0.6, metalness: 0.3 });
+  // Rotate the geometry itself (not the mesh) so the mesh transform stays
+  // identity — children placed at local +z then correctly land toward the
+  // camera (world +Z) instead of being thrown off along world -Y.
+  const discGeo = new THREE.CylinderGeometry(0.5, 0.5, 0.06, 40);
+  discGeo.rotateX(Math.PI / 2);
+  const disc = new THREE.Mesh(discGeo, discMat);
+
+  const rimMat = new THREE.MeshStandardMaterial({ color: 0x11151b, roughness: 0.5, metalness: 0.6 });
+  const rim = new THREE.Mesh(new THREE.TorusGeometry(0.5, 0.02, 10, 40), rimMat);
+  disc.add(rim);
+
+  const needlePivot = new THREE.Group();
+  const needleMat = new THREE.MeshStandardMaterial({ color: 0xf85149, roughness: 0.4, metalness: 0.2, emissive: 0x3a0f0d });
+  const needle = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.42, 0.03), needleMat);
+  needle.position.y = 0.21;
+  needlePivot.add(needle);
+  const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.05, 16), new THREE.MeshStandardMaterial({ color: 0xd7dde3, roughness: 0.3, metalness: 0.8 }));
+  hub.rotation.x = Math.PI / 2;
+  needlePivot.add(hub);
+  disc.add(needlePivot);
+  needlePivot.position.z = 0.04;
+
+  const label = buildDigitPlate(freq.channelLabel);
+  label.position.set(0, -0.72, 0);
+
+  return { disc, needlePivot, label };
+}
+
+function createContext() {
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x050708);
+
+  const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
+  camera.position.set(2.2, 1.6, 2.2);
+
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+  const controls = new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.minDistance = 1.6;
+  controls.maxDistance = 5;
+
+  scene.add(new THREE.AmbientLight(0x8899aa, 0.6));
+  const key = new THREE.DirectionalLight(0xffffff, 1.1);
+  key.position.set(3, 4, 2);
+  scene.add(key);
+  const rim = new THREE.DirectionalLight(0x3fb9ff, 0.4);
+  rim.position.set(-3, -1, -2);
+  scene.add(rim);
+
+  const casingGeo = new THREE.BoxGeometry(1.6, 1.6, 1.6);
+  const casing = new THREE.Mesh(casingGeo, new THREE.MeshStandardMaterial({ color: 0x1c2129, roughness: 0.6, metalness: 0.4 }));
+  casing.rotation.y = 0.4;
+  scene.add(casing);
+  casing.add(new THREE.LineSegments(new THREE.EdgesGeometry(casingGeo), new THREE.LineBasicMaterial({ color: 0x30363d })));
+
+  // Every face gets its own module mount (group + backing plate), matching
+  // the same 6 face slots the crack overlay already uses. Two of these get
+  // populated per round (see sync()); the rest stay empty. Orbit target
+  // stays at the casing's own origin — with modules on arbitrary faces,
+  // there's no single "the" module to recenter on anymore.
+  const HALF = 0.805;
+  const FACE_CONFIG = {
+    front: { pos: new THREE.Vector3(0, 0, HALF), rot: new THREE.Euler(0, 0, 0) },
+    back: { pos: new THREE.Vector3(0, 0, -HALF), rot: new THREE.Euler(0, Math.PI, 0) },
+    right: { pos: new THREE.Vector3(HALF, 0, 0), rot: new THREE.Euler(0, Math.PI / 2, 0) },
+    left: { pos: new THREE.Vector3(-HALF, 0, 0), rot: new THREE.Euler(0, -Math.PI / 2, 0) },
+    top: { pos: new THREE.Vector3(0, HALF, 0), rot: new THREE.Euler(-Math.PI / 2, 0, 0) },
+    bottom: { pos: new THREE.Vector3(0, -HALF, 0), rot: new THREE.Euler(Math.PI / 2, 0, 0) },
+  };
+  const moduleMounts = {};
+  for (const [face, cfg] of Object.entries(FACE_CONFIG)) {
+    const group = new THREE.Group();
+    group.position.copy(cfg.pos);
+    group.rotation.copy(cfg.rot);
+    casing.add(group);
+    const plate = new THREE.Mesh(new THREE.PlaneGeometry(1.3, 1.3), new THREE.MeshStandardMaterial({ color: 0x11151b, roughness: 0.8 }));
+    group.add(plate);
+    moduleMounts[face] = { group, plate, moduleType: null, wireIndex: {}, nodeIndex: {}, dial: null, signature: '' };
+  }
+
+  const crackFaces = Object.entries(FACE_CONFIG).map(([, cfg]) => makeCrackFace(casing, cfg.pos, cfg.rot));
+  function drawCracks(fraction) {
+    for (const face of crackFaces) face.draw(fraction);
+    const opacity = Math.min(1, fraction * 0.95 + (fraction > 0 ? 0.15 : 0));
+    for (const face of crackFaces) face.mat.opacity = opacity;
+  }
+
+  const raycaster = new THREE.Raycaster();
+  const pointer = new THREE.Vector2();
+  renderer.domElement.addEventListener('pointerdown', (ev) => {
+    if (!c.actions) return;
+    const rect = renderer.domElement.getBoundingClientRect();
+    pointer.x = ((ev.clientX - rect.left) / rect.width) * 2 - 1;
+    pointer.y = -((ev.clientY - rect.top) / rect.height) * 2 + 1;
+    raycaster.setFromCamera(pointer, camera);
+
+    for (const [face, mount] of Object.entries(c.moduleMounts)) {
+      if (mount.moduleType === 'wire_cut' && c.actions.onCut) {
+        const targets = Object.values(mount.wireIndex).map((e) => e.core);
+        const hits = raycaster.intersectObjects(targets, false);
+        if (!hits.length) continue;
+        const found = Object.entries(mount.wireIndex).find(([, e]) => e.core === hits[0].object);
+        if (!found || found[1].cut) continue;
+        c.actions.onCut(face, found[0]);
+        return;
+      } else if (mount.moduleType === 'handshake_grid' && c.actions.onPress) {
+        const targets = Object.values(mount.nodeIndex).map((e) => e.base);
+        const hits = raycaster.intersectObjects(targets, false);
+        if (!hits.length) continue;
+        const found = Object.entries(mount.nodeIndex).find(([, e]) => e.base === hits[0].object);
+        if (!found || found[1].pressed) continue;
+        c.actions.onPress(face, found[0]);
+        return;
+      } else if (mount.moduleType === 'frequency_lock' && c.actions.onTune && mount.dial) {
+        const hits = raycaster.intersectObject(mount.dial.disc, false);
+        if (!hits.length) continue;
+        const local = mount.dial.disc.worldToLocal(hits[0].point.clone());
+        const angle = Math.atan2(local.x, local.y);
+        c.actions.onTune(face, angleToValue(angle), false);
+        return;
+      }
+    }
+  });
+
+  let lastW = 0, lastH = 0;
+  function animate() {
+    requestAnimationFrame(animate);
+    controls.update();
+    renderer.render(scene, camera);
+  }
+  animate();
+
+  const c = {
+    renderer, scene, camera, controls, casing, moduleMounts, drawCracks,
+    actions: null, lastW, lastH,
+  };
+  return c;
+}
+
+function ensureSize(mountEl) {
+  const w = mountEl.clientWidth || 300;
+  const h = mountEl.clientHeight || 300;
+  if (w !== ctx.lastW || h !== ctx.lastH) {
+    ctx.renderer.setSize(w, h, false);
+    ctx.camera.aspect = w / h;
+    ctx.camera.updateProjectionMatrix();
+    ctx.lastW = w;
+    ctx.lastH = h;
+  }
+}
+
+function clearMount(mount) {
+  const toRemove = mount.group.children.filter((child) => child !== mount.plate);
+  for (const child of toRemove) mount.group.remove(child);
+  mount.wireIndex = {};
+  mount.nodeIndex = {};
+  mount.dial = null;
+  mount.moduleType = null;
+  mount.signature = '';
+}
+
+function buildWireCutInMount(mount, wires) {
+  const count = wires.length;
+  const spacing = 1.3 / (count + 1);
+  wires.forEach((w, i) => {
+    const x = -1.3 / 2 + spacing * (i + 1);
+    const { group, core, glyph } = buildWireGroup(w.shape);
+    group.position.set(x, 0, 0.03);
+    mount.group.add(group);
+    const entry = { group, core, glyph, cut: false };
+    mount.wireIndex[w.id] = entry;
+    if (w.cut) {
+      severWire(entry);
+      entry.cut = true;
+    }
+  });
+}
+
+function buildHandshakeInMount(mount, grid) {
+  const spacing = 1.2 / (grid.size + 1);
+  grid.nodes.forEach((n) => {
+    const x = -1.2 / 2 + spacing * (n.col + 1);
+    const y = 1.2 / 2 - spacing * (n.row + 1);
+    const { group, base, glyph } = buildNodeButton(n.shape);
+    group.position.set(x, y, 0.03);
+    mount.group.add(group);
+    const entry = { group, base, glyph, pressed: false };
+    mount.nodeIndex[n.id] = entry;
+    if (n.pressed) {
+      pressNode(entry);
+      entry.pressed = true;
+    }
+  });
+}
+
+function buildFrequencyInMount(mount, freq) {
+  const dial = buildDialScene(freq);
+  dial.disc.position.set(0, 0, 0.05);
+  mount.group.add(dial.disc);
+  mount.group.add(dial.label);
+  dial.needlePivot.rotation.z = valueToAngle(freq.dialValue);
+  mount.dial = dial;
+}
+
+function moduleSignature(mod) {
+  if (mod.moduleType === 'wire_cut') return 'wire_cut:' + (mod.wires || []).map((w) => w.id).join(',');
+  if (mod.moduleType === 'handshake_grid' && mod.grid) return 'handshake_grid:' + mod.grid.nodes.map((n) => n.id).join(',');
+  if (mod.moduleType === 'frequency_lock' && mod.freq) return 'frequency_lock:' + mod.freq.channelLabel;
+  return mod.moduleType || '';
+}
+
+function sync(mountEl, view, actions) {
+  if (!ctx) ctx = createContext();
+  if (mountEl.firstChild !== ctx.renderer.domElement) {
+    mountEl.innerHTML = '';
+    mountEl.appendChild(ctx.renderer.domElement);
+  }
+  ctx.actions = actions;
+  ensureSize(mountEl);
+
+  const modules = view.modules || [];
+  const activeFaces = new Set(modules.map((m) => m.face));
+  // A face that had a module last round but doesn't this round (modules
+  // reshuffle onto random faces each round) needs to go back to empty.
+  for (const [face, mount] of Object.entries(ctx.moduleMounts)) {
+    if (!activeFaces.has(face) && mount.moduleType) clearMount(mount);
+  }
+
+  for (const mod of modules) {
+    const mount = ctx.moduleMounts[mod.face];
+    if (!mount) continue;
+    const sig = moduleSignature(mod);
+    if (sig !== mount.signature) {
+      clearMount(mount);
+      mount.moduleType = mod.moduleType;
+      mount.signature = sig;
+      if (mod.moduleType === 'wire_cut') buildWireCutInMount(mount, mod.wires || []);
+      else if (mod.moduleType === 'handshake_grid' && mod.grid) buildHandshakeInMount(mount, mod.grid);
+      else if (mod.moduleType === 'frequency_lock' && mod.freq) buildFrequencyInMount(mount, mod.freq);
+    } else if (mod.moduleType === 'wire_cut') {
+      for (const w of mod.wires || []) {
+        const entry = mount.wireIndex[w.id];
+        if (entry && w.cut && !entry.cut) {
+          severWire(entry);
+          entry.cut = true;
+        }
+      }
+    } else if (mod.moduleType === 'handshake_grid' && mod.grid) {
+      for (const n of mod.grid.nodes) {
+        const entry = mount.nodeIndex[n.id];
+        if (entry && n.pressed && !entry.pressed) {
+          pressNode(entry);
+          entry.pressed = true;
+        }
+      }
+    } else if (mod.moduleType === 'frequency_lock' && mod.freq && mount.dial) {
+      mount.dial.needlePivot.rotation.z = valueToAngle(mod.freq.dialValue);
+    }
+  }
+
+  ctx.drawCracks(Math.max(0, Math.min(1, (view.spread || 0) / 100)));
+}
+
+window.RelayBomb3D = { sync };
 </script>
 </body>
 </html>
