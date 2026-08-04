@@ -37,20 +37,39 @@ function pick(arr) {
 
 // ---- Puzzle generation ----------------------------------------------------
 
-function makeWires(forceShapePair) {
+const MAX_WIRE_COUNT = 8;
+const MIN_TIMER_SECONDS = 60;
+
+// Difficulty scales with round number: more wires, a shorter clock, and a
+// wider variant pool unlock as the room clears more bombs in a row.
+function wireCountForRound(round) {
+  return Math.min(WIRE_COUNT + Math.floor((round - 1) / 2), MAX_WIRE_COUNT);
+}
+
+function timerForRound(round) {
+  return Math.max(TIMER_SECONDS - (round - 1) * 5, MIN_TIMER_SECONDS);
+}
+
+function variantPoolForRound(round) {
+  const pool = ['sequence', 'color_group', 'shape_pair'];
+  if (round >= 3) pool.push('position_parity', 'color_exclusion');
+  return pool;
+}
+
+function makeWires(count, forceShapePair) {
   const shapes = [];
   if (forceShapePair) {
     // Guarantee exactly one shape appears twice, so a "matching pair" puzzle is solvable.
     const pairShape = pick(SHAPES);
     shapes.push(pairShape, pairShape);
-    const others = shuffle(SHAPES.filter((s) => s !== pairShape)).slice(0, WIRE_COUNT - 2);
-    shapes.push(...others);
+    const others = shuffle(SHAPES.filter((s) => s !== pairShape));
+    while (shapes.length < count) shapes.push(others[(shapes.length - 2) % others.length]);
     shuffle(shapes).forEach((s, i) => (shapes[i] = s));
   } else {
-    for (let i = 0; i < WIRE_COUNT; i++) shapes.push(pick(SHAPES));
+    for (let i = 0; i < count; i++) shapes.push(pick(SHAPES));
   }
   const colors = [];
-  for (let i = 0; i < WIRE_COUNT; i++) colors.push(pick(COLORS));
+  for (let i = 0; i < count; i++) colors.push(pick(COLORS));
   return shapes.map((shape, i) => ({
     id: `w${i}`,
     position: i,
@@ -60,51 +79,81 @@ function makeWires(forceShapePair) {
   }));
 }
 
-function generatePuzzle() {
-  const variant = pick(['sequence', 'color_group', 'shape_pair']);
-  const wires = makeWires(variant === 'shape_pair');
-  let ruleText, solutionOrder;
+function generatePuzzle(round = 1) {
+  const wireCount = wireCountForRound(round);
+  const variant = pick(variantPoolForRound(round));
+  const wires = makeWires(wireCount, variant === 'shape_pair');
+  const totalWires = wires.length;
 
   if (variant === 'sequence') {
     const order = shuffle(wires.map((w) => w.id));
-    solutionOrder = order;
     const desc = order
       .map((id) => wires.find((w) => w.id === id))
       .map((w) => `#${w.position + 1} (${w.color} ${w.shape})`)
       .join(' -> ');
-    ruleText = `Cut wires in this exact order: ${desc}.`;
-  } else if (variant === 'color_group') {
-    const targetColor = pick([...new Set(wires.map((w) => w.color))]);
-    const group = wires.filter((w) => w.color === targetColor).map((w) => w.id);
-    const rest = wires.filter((w) => w.color !== targetColor).map((w) => w.id);
-    solutionOrder = [...group, ...shuffle(rest)];
-    ruleText = `Cut every ${targetColor.toUpperCase()} wire first (any order among them), then cut the rest in any order.`;
-    solutionOrder = group; // only the group must be exact-first; rest can be any order, handled specially
     return {
       variant,
       wires,
-      ruleText,
-      requiredFirst: group,
-      totalWires: wires.length,
+      ruleText: `Cut wires in this exact order: ${desc}.`,
+      solutionOrder: order,
+      totalWires,
     };
-  } else {
+  }
+
+  if (variant === 'color_group') {
+    const targetColor = pick([...new Set(wires.map((w) => w.color))]);
+    const group = wires.filter((w) => w.color === targetColor).map((w) => w.id);
+    return {
+      variant,
+      wires,
+      ruleText: `Cut every ${targetColor.toUpperCase()} wire (any order among them). Leave every other wire untouched.`,
+      requiredFirst: group,
+      exactSet: true,
+      totalWires,
+    };
+  }
+
+  if (variant === 'shape_pair') {
     const shapeCounts = {};
     wires.forEach((w) => (shapeCounts[w.shape] = (shapeCounts[w.shape] || 0) + 1));
     const pairShape = Object.keys(shapeCounts).find((s) => shapeCounts[s] >= 2) || wires[0].shape;
     const pairWires = wires.filter((w) => w.shape === pairShape).map((w) => w.id);
-    const rest = wires.filter((w) => w.shape !== pairShape).map((w) => w.id);
-    ruleText = `Find the two wires that share the same shape (${pairShape.toUpperCase()}) and cut only those two. Leave the rest untouched.`;
     return {
       variant,
       wires,
-      ruleText,
+      ruleText: `Find the two wires that share the same shape (${pairShape.toUpperCase()}) and cut only those two. Leave the rest untouched.`,
       requiredFirst: pairWires,
       exactSet: true,
-      totalWires: wires.length,
+      totalWires,
     };
   }
 
-  return { variant, wires, ruleText, solutionOrder, totalWires: wires.length };
+  if (variant === 'position_parity') {
+    const parity = pick(['even', 'odd']);
+    const group = wires
+      .filter((w) => (w.position + 1) % 2 === (parity === 'even' ? 0 : 1))
+      .map((w) => w.id);
+    return {
+      variant,
+      wires,
+      ruleText: `Cut every wire at an ${parity.toUpperCase()}-numbered position (any order among them). Leave the other positions untouched.`,
+      requiredFirst: group,
+      exactSet: true,
+      totalWires,
+    };
+  }
+
+  // color_exclusion
+  const excludedColor = pick([...new Set(wires.map((w) => w.color))]);
+  const group = wires.filter((w) => w.color !== excludedColor).map((w) => w.id);
+  return {
+    variant,
+    wires,
+    ruleText: `Cut every wire EXCEPT the ${excludedColor.toUpperCase()} ones (any order). Leave ${excludedColor.toUpperCase()} wires untouched.`,
+    requiredFirst: group,
+    exactSet: true,
+    totalWires,
+  };
 }
 
 // ---- Room model -------------------------------------------------------
@@ -118,6 +167,8 @@ class Room {
     this.puzzle = null;
     this.startedAt = null;
     this.strikes = 0;
+    this.round = 1; // increments on each win, resets to 1 on a loss
+    this.timerDuration = TIMER_SECONDS;
     this.log = []; // {from, kind, value, at}
     this.instruction = ''; // latest plain-text instruction for the blind operator
     this.connections = new Map(); // playerId -> res (SSE)
@@ -130,9 +181,9 @@ class Room {
   }
 
   timeRemaining() {
-    if (!this.startedAt) return TIMER_SECONDS;
+    if (!this.startedAt) return this.timerDuration;
     const elapsed = (Date.now() - this.startedAt) / 1000;
-    return Math.max(0, Math.round(TIMER_SECONDS - elapsed));
+    return Math.max(0, Math.round(this.timerDuration - elapsed));
   }
 
   checkTimeout() {
@@ -180,7 +231,8 @@ function buildView(room, playerId) {
     availableRoles: room.availableRoles(),
     yourRole: role,
     timeRemaining: room.timeRemaining(),
-    timerDuration: TIMER_SECONDS,
+    timerDuration: room.timerDuration,
+    round: room.round,
     strikes: room.strikes,
     wiresRemaining: room.wiresRemaining(),
     totalWires: room.puzzle ? room.puzzle.totalWires : WIRE_COUNT,
@@ -323,7 +375,8 @@ const routes = {
     if (!filled || room.players.size !== room.mode) {
       return sendJson(res, 400, { error: 'Every role must be filled before starting.' });
     }
-    room.puzzle = generatePuzzle();
+    room.timerDuration = timerForRound(room.round);
+    room.puzzle = generatePuzzle(room.round);
     room.startedAt = Date.now();
     room.status = 'active';
     room.strikes = 0;
@@ -337,6 +390,9 @@ const routes = {
     const body = await readBody(req);
     const room = rooms.get(body.roomId);
     if (!room) return sendJson(res, 404, { error: 'Room not found.' });
+    room.checkTimeout();
+    if (room.status === 'won') room.round += 1;
+    else if (room.status === 'lost') room.round = 1;
     room.puzzle = null;
     room.startedAt = null;
     room.status = 'lobby';
@@ -462,7 +518,15 @@ function puzzleSatisfied(puzzle) {
   return puzzle.requiredFirst.every((id) => puzzle.wires.find((w) => w.id === id).cut);
 }
 
-const STATIC_TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css' };
+const STATIC_TYPES = {
+  '.html': 'text/html',
+  '.js': 'text/javascript',
+  '.css': 'text/css',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.png': 'image/png',
+  '.svg': 'image/svg+xml',
+};
 
 function serveStatic(req, res) {
   const file = req.url === '/' ? '/index.html' : req.url;

@@ -15,7 +15,7 @@ A multiplayer bomb-defusal prototype about relaying information under constraint
 
 Each role has a genuine information constraint and a genuine piece of expertise the others need — nobody can solve the bomb alone. The server never sends a role information it isn't entitled to see (each SSE connection gets a role-filtered view, not the full room state).
 
-Puzzles are randomized per round across three variants (exact cut order, color grouping, shape pairing), with a 90-second synced countdown and a 3-strike limit.
+Puzzles are randomized per round across five variants (exact cut order, color grouping, color exclusion, position parity, shape pairing), with a synced countdown and a 3-strike limit. Difficulty escalates with each win in a room: wire count grows from 5 up to 8, the timer shrinks from 90s down to a 60s floor, and the two more demanding variants (position parity, color exclusion) only enter the pool from round 3 onward. A loss resets the room back to round 1.
 
 ## Run locally
 
@@ -41,6 +41,12 @@ This repo includes a `render.yaml` Blueprint.
 - High-contrast dark theme; `prefers-contrast: more` gets stronger border contrast.
 - `prefers-reduced-motion: reduce` collapses all transitions/animations.
 - Wire shapes are distinguished by SVG glyph, not color alone, everywhere they appear.
+
+## Assets
+
+- `assets/metal-panel.jpg` — a downscaled crop of ambientCG's "Metal006" material (CC0, no attribution required). https://ambientcg.com/a/Metal006
+- Font: "Share Tech Mono" via Google Fonts (SIL Open Font License).
+- Bolt/rivet panel accents are hand-authored CSS (radial-gradient pseudo-elements), not an image asset.
 
 ## Known limitations
 
