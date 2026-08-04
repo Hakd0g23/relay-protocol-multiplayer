@@ -42,7 +42,8 @@ function pick(arr) {
 // ---- Puzzle generation ----------------------------------------------------
 
 const MAX_WIRE_COUNT = 8;
-const MIN_TIMER_SECONDS = 60;
+const MIN_TIMER_SECONDS = 75;
+const LOOKUP_TIME_BONUS = 15; // extra seconds per manual-lookup module — those take real decode time
 const CONTAINMENT_THRESHOLD = 50; // spread % at which the ruleset shifts once
 
 // Difficulty scales with round number: more wires, a shorter clock, and a
@@ -52,7 +53,7 @@ function wireCountForRound(round) {
 }
 
 function timerForRound(round) {
-  return Math.max(TIMER_SECONDS - (round - 1) * 5, MIN_TIMER_SECONDS);
+  return Math.max(TIMER_SECONDS - (round - 1) * 3, MIN_TIMER_SECONDS);
 }
 
 function variantPoolForRound(round) {
@@ -670,9 +671,10 @@ const routes = {
     if (!filled || room.players.size !== room.mode) {
       return sendJson(res, 400, { error: 'Every role must be filled before starting.' });
     }
-    room.timerDuration = timerForRound(room.round);
     room.bombKey = generateBombKey();
     room.modules = generateModules(room.round, room.bombKey);
+    const lookupCount = room.modules.filter((m) => m.ruleText && m.ruleText.includes('MANUAL LOOKUP')).length;
+    room.timerDuration = timerForRound(room.round) + lookupCount * LOOKUP_TIME_BONUS;
     room.startedAt = Date.now();
     room.status = 'active';
     room.spread = 0;
