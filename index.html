@@ -4,6 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Relay Protocol</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
 <style>
   :root {
     --bg: #0d1117;
@@ -15,6 +18,7 @@
     --danger: #f85149;
     --ok: #3fb950;
     --warn: #d29922;
+    --font-mono: 'Share Tech Mono', ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
   }
   * { box-sizing: border-box; }
   html { -webkit-text-size-adjust: 100%; }
@@ -24,6 +28,16 @@
     background: var(--bg);
     color: var(--text);
     min-height: 100vh;
+  }
+  .hazard-strip {
+    height: 8px;
+    border-radius: 4px;
+    margin: 0.4rem 0 1rem;
+    background: repeating-linear-gradient(
+      45deg,
+      var(--warn) 0px, var(--warn) 10px,
+      #1a1300 10px, #1a1300 20px
+    );
   }
   @media (prefers-reduced-motion: reduce) {
     * { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
@@ -68,30 +82,37 @@
   .role-desc { color: var(--muted); font-size: 0.85rem; }
   .status-list { list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 0.4rem; }
   .status-list li {
+    font-family: var(--font-mono);
     border: 1px solid var(--border); border-radius: 999px; padding: 0.2rem 0.7rem; font-size: 0.85rem;
   }
   .status-list li.connected { border-color: var(--ok); }
   .status-list li.disconnected { color: var(--muted); }
   .timer {
+    font-family: var(--font-mono);
     font-size: 2.2rem; font-weight: 800; text-align: center; font-variant-numeric: tabular-nums;
   }
-  .timer.low { color: var(--danger); }
+  .timer.low { color: var(--danger); border-top: 3px solid var(--danger); padding-top: 0.3rem; }
   .wire-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(90px, 1fr)); gap: 0.6rem; margin: 0.75rem 0; }
   .wire-btn {
     aspect-ratio: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
-    border: 2px solid var(--border); border-radius: 10px; background: var(--panel); gap: 0.35rem;
+    border: 2px solid var(--border); border-radius: 10px; background: var(--panel); color: var(--text); gap: 0.35rem;
   }
   .wire-btn[data-cut="true"] { opacity: 0.35; text-decoration: line-through; border-style: dashed; }
   .wire-shape { width: 34px; height: 34px; }
   .wire-color-swatch { display: block; width: 22px; height: 22px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.4); }
   .symbol-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.5rem; }
   .symbol-btn { font-size: 1.5rem; padding: 0.6rem; }
-  .log { max-height: 140px; overflow-y: auto; font-size: 0.85rem; border-top: 1px solid var(--border); padding-top: 0.5rem; }
+  .log { font-family: var(--font-mono); max-height: 140px; overflow-y: auto; font-size: 0.85rem; border-top: 1px solid var(--border); padding-top: 0.5rem; }
   .log div { padding: 0.15rem 0; color: var(--muted); }
   .banner { padding: 0.75rem; border-radius: 8px; margin-bottom: 1rem; font-weight: 600; text-align: center; }
   .banner.won { background: #10331b; color: var(--ok); }
-  .banner.lost { background: #3a1414; color: var(--danger); }
+  .banner.lost {
+    background: repeating-linear-gradient(45deg, #3a1414 0px, #3a1414 12px, #200a0a 12px, #200a0a 24px);
+    color: var(--danger);
+    border: 1px solid var(--danger);
+  }
   .instruction-box {
+    font-family: var(--font-mono);
     background: #1c2733; border: 1px solid var(--accent); border-radius: 8px; padding: 0.75rem; font-size: 1.05rem;
   }
   .visually-hidden {
@@ -104,6 +125,7 @@
 <div class="wrap" id="app">
   <h1>Relay Protocol</h1>
   <p class="tagline">A bomb-defusal relay game. No one player can see everything — say what you know.</p>
+  <div class="hazard-strip" role="presentation"></div>
   <div id="root" aria-live="polite"></div>
 </div>
 
