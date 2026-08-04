@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Relay Protocol</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --border: #30363d;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --accent: #58a6ff;
+    --danger: #f85149;
+    --ok: #3fb950;
+    --warn: #d29922;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
+  }
+  @media (prefers-contrast: more) {
+    :root { --border: #ffffff; --muted: #cfd8e3; }
+  }
+  .wrap { max-width: 720px; margin: 0 auto; padding: 1rem; }
+  h1 { font-size: 1.4rem; margin: 0.2rem 0 0.4rem; }
+  p.tagline { color: var(--muted); margin-top: 0; }
+  fieldset { border: 1px solid var(--border); border-radius: 8px; margin-bottom: 1rem; }
+  legend { padding: 0 0.4rem; color: var(--muted); }
+  label { display: block; margin: 0.5rem 0 0.25rem; }
+  input[type=text] {
+    width: 100%; padding: 0.6rem; border-radius: 6px; border: 1px solid var(--border);
+    background: var(--panel); color: var(--text); font-size: 1rem;
+  }
+  input[type=text]:focus, button:focus, [role=button]:focus {
+    outline: 3px solid var(--accent); outline-offset: 2px;
+  }
+  button {
+    background: var(--accent); color: #0d1117; border: none; border-radius: 6px;
+    padding: 0.65rem 1rem; font-size: 1rem; font-weight: 600; cursor: pointer;
+    min-height: 44px;
+  }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  button.secondary { background: transparent; border: 1px solid var(--border); color: var(--text); }
+  .row { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+  .card {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    padding: 1rem; margin-bottom: 1rem;
+  }
+  .role-grid { display: grid; grid-template-columns: 1fr; gap: 0.5rem; }
+  @media (min-width: 480px) { .role-grid { grid-template-columns: 1fr 1fr; } }
+  .role-btn {
+    display: block; width: 100%; text-align: left; background: var(--panel);
+    border: 1px solid var(--border); border-radius: 8px; padding: 0.75rem;
+  }
+  .role-btn[aria-pressed="true"] { border-color: var(--accent); background: #1c2733; }
+  .role-btn:disabled { opacity: 0.4; }
+  .role-name { font-weight: 700; display: block; }
+  .role-desc { color: var(--muted); font-size: 0.85rem; }
+  .status-list { list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 0.4rem; }
+  .status-list li {
+    border: 1px solid var(--border); border-radius: 999px; padding: 0.2rem 0.7rem; font-size: 0.85rem;
+  }
+  .status-list li.connected { border-color: var(--ok); }
+  .status-list li.disconnected { color: var(--muted); }
+  .timer {
+    font-size: 2.2rem; font-weight: 800; text-align: center; font-variant-numeric: tabular-nums;
+  }
+  .timer.low { color: var(--danger); }
+  .wire-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(90px, 1fr)); gap: 0.6rem; margin: 0.75rem 0; }
+  .wire-btn {
+    aspect-ratio: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    border: 2px solid var(--border); border-radius: 10px; background: var(--panel); gap: 0.35rem;
+  }
+  .wire-btn[data-cut="true"] { opacity: 0.35; text-decoration: line-through; border-style: dashed; }
+  .wire-shape { width: 34px; height: 34px; }
+  .wire-color-swatch { display: block; width: 22px; height: 22px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.4); }
+  .symbol-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.5rem; }
+  .symbol-btn { font-size: 1.5rem; padding: 0.6rem; }
+  .log { max-height: 140px; overflow-y: auto; font-size: 0.85rem; border-top: 1px solid var(--border); padding-top: 0.5rem; }
+  .log div { padding: 0.15rem 0; color: var(--muted); }
+  .banner { padding: 0.75rem; border-radius: 8px; margin-bottom: 1rem; font-weight: 600; text-align: center; }
+  .banner.won { background: #10331b; color: var(--ok); }
+  .banner.lost { background: #3a1414; color: var(--danger); }
+  .instruction-box {
+    background: #1c2733; border: 1px solid var(--accent); border-radius: 8px; padding: 0.75rem; font-size: 1.05rem;
+  }
+  .visually-hidden {
+    position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
+  }
+  .conn-flag { font-size: 0.8rem; color: var(--warn); }
+</style>
+</head>
+<body>
+<div class="wrap" id="app">
+  <h1>Relay Protocol</h1>
+  <p class="tagline">A bomb-defusal relay game. No one player can see everything — say what you know.</p>
+  <div id="root" aria-live="polite"></div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  const SHAPE_SVGS = {
+    circle: '<svg viewBox="0 0 40 40" class="wire-shape" aria-hidden="true"><circle cx="20" cy="20" r="15" fill="currentColor"/></svg>',
+    triangle: '<svg viewBox="0 0 40 40" class="wire-shape" aria-hidden="true"><polygon points="20,5 35,33 5,33" fill="currentColor"/></svg>',
+    square: '<svg viewBox="0 0 40 40" class="wire-shape" aria-hidden="true"><rect x="6" y="6" width="28" height="28" fill="currentColor"/></svg>',
+    diamond: '<svg viewBox="0 0 40 40" class="wire-shape" aria-hidden="true"><polygon points="20,4 36,20 20,36 4,20" fill="currentColor"/></svg>',
+    star: '<svg viewBox="0 0 40 40" class="wire-shape" aria-hidden="true"><polygon points="20,3 24,15 37,15 26,23 30,35 20,27 10,35 14,23 3,15 16,15" fill="currentColor"/></svg>'
+  };
+
+  const ROLE_INFO = {
+    blind_operator: {
+      name: 'Blind Bomb Operator',
+      desc: 'Sees wire shapes only, in grayscale, no color. Cuts wires based on instructions relayed to you.'
+    },
+    relay_specialist: {
+      name: 'Relay Specialist',
+      desc: 'Sees the full color-coded wire panel and the defusal rule. Type instructions for the Operator.'
+    },
+    mute_reader: {
+      name: 'Mute Clue Reader',
+      desc: 'Sees the full color-coded panel and the rule, but can only send fixed symbols — no free text.'
+    },
+    deaf_interpreter: {
+      name: 'Deaf Interpreter',
+      desc: 'Cannot see the color panel or rule. Reads the incoming symbol stream and writes plain instructions for the Operator.'
+    }
+  };
+
+  const state = {
+    roomId: null,
+    playerId: null,
+    mode: null,
+    view: null,
+    es: null,
+    reconnectDelay: 1000,
+  };
+
+  const root = document.getElementById('root');
+
+  function saveSession() {
+    if (state.roomId && state.playerId) {
+      sessionStorage.setItem('relay-session', JSON.stringify({ roomId: state.roomId, playerId: state.playerId }));
+    }
+  }
+  function loadSession() {
+    try {
+      return JSON.parse(sessionStorage.getItem('relay-session') || 'null');
+    } catch (e) { return null; }
+  }
+  function clearSession() {
+    sessionStorage.removeItem('relay-session');
+  }
+
+  async function api(path, body) {
+    const res = await fetch(path, {
+      method: body ? 'POST' : 'GET',
+      headers: body ? { 'Content-Type': 'application/json' } : undefined,
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'Request failed');
+    return data;
+  }
+
+  function connectStream() {
+    if (state.es) state.es.close();
+    const es = new EventSource(`/api/room/stream?roomId=${encodeURIComponent(state.roomId)}&playerId=${encodeURIComponent(state.playerId)}`);
+    es.onmessage = (evt) => {
+      state.reconnectDelay = 1000;
+      state.view = JSON.parse(evt.data);
+      render();
+    };
+    es.onerror = () => {
+      es.close();
+      const delay = Math.min(state.reconnectDelay, 10000);
+      setTimeout(connectStream, delay);
+      state.reconnectDelay = delay * 1.6;
+      renderConnFlag(true);
+    };
+    state.es = es;
+  }
+
+  function renderConnFlag(show) {
+    const el = document.getElementById('conn-flag');
+    if (el) el.hidden = !show;
+  }
+
+  // ---- Screens --------------------------------------------------------
+
+  function renderLobbyForm() {
+    root.innerHTML = `
+      <div class="card">
+        <label for="name-input">Your name</label>
+        <input id="name-input" type="text" maxlength="24" autocomplete="off" value="${localStorage.getItem('relay-name') || ''}">
+
+        <label for="room-input">Room code (leave blank to create a new room)</label>
+        <input id="room-input" type="text" maxlength="8" autocomplete="off">
+
+        <fieldset>
+          <legend>Player count</legend>
+          <div class="row" role="radiogroup" aria-label="Player count">
+            <label><input type="radio" name="mode" value="2" checked> 2 players</label>
+            <label><input type="radio" name="mode" value="3"> 3 players</label>
+          </div>
+        </fieldset>
+
+        <button id="join-btn" type="button">Join / Create Room</button>
+        <p id="join-error" role="alert" style="color:var(--danger)"></p>
+      </div>
+    `;
+    document.getElementById('join-btn').addEventListener('click', async () => {
+      const name = document.getElementById('name-input').value.trim() || 'Player';
+      const roomId = document.getElementById('room-input').value.trim();
+      const mode = Number(document.querySelector('input[name=mode]:checked').value);
+      localStorage.setItem('relay-name', name);
+      try {
+        const data = await api('/api/room/join', { name, roomId, mode });
+        state.roomId = data.roomId;
+        state.playerId = data.playerId;
+        state.mode = data.mode;
+        saveSession();
+        connectStream();
+      } catch (e) {
+        document.getElementById('join-error').textContent = e.message;
+      }
+    });
+  }
+
+  function renderRolePicker(view) {
+    const roles = Object.keys(ROLE_INFO).filter((r) =>
+      (view.mode === 2 ? ['blind_operator', 'relay_specialist'] : ['blind_operator', 'mute_reader', 'deaf_interpreter']).includes(r)
+    );
+    const taken = new Set(view.players.map((p) => p.role).filter(Boolean));
+    return `
+      <div class="card">
+        <h2>Room ${view.roomId}</h2>
+        <p>Share this room code with your teammate${view.mode === 3 ? 's' : ''}. ${view.mode}-player mode.</p>
+        <div class="role-grid" role="group" aria-label="Choose your role">
+          ${roles.map((r) => {
+            const info = ROLE_INFO[r];
+            const isTaken = taken.has(r) && view.yourRole !== r;
+            const isMine = view.yourRole === r;
+            return `<button class="role-btn" data-role="${r}" aria-pressed="${isMine}" ${isTaken ? 'disabled' : ''}>
+              <span class="role-name">${info.name}${isTaken ? ' (taken)' : ''}</span>
+              <span class="role-desc">${info.desc}</span>
+            </button>`;
+          }).join('')}
+        </div>
+        ${renderPlayerStatus(view)}
+        <button id="start-btn" type="button" ${allRolesFilled(view) ? '' : 'disabled'}>Start Bomb</button>
+        ${!allRolesFilled(view) ? '<p class="conn-flag">Waiting for every role to be filled.</p>' : ''}
+      </div>
+    `;
+  }
+
+  function allRolesFilled(view) {
+    const needed = view.mode === 2 ? 2 : 3;
+    return view.players.length === needed && view.players.every((p) => p.role);
+  }
+
+  function renderPlayerStatus(view) {
+    return `<ul class="status-list" aria-label="Connected players">
+      ${view.players.map((p) => `<li class="${p.connected ? 'connected' : 'disconnected'}">${p.name} — ${p.role ? ROLE_INFO[p.role].name : 'choosing role'} ${p.connected ? '' : '(offline)'}</li>`).join('')}
+    </ul>`;
+  }
+
+  function renderTimer(view) {
+    const low = view.timeRemaining <= 20;
+    const m = Math.floor(view.timeRemaining / 60);
+    const s = String(view.timeRemaining % 60).padStart(2, '0');
+    return `<div class="timer ${low ? 'low' : ''}" role="timer" aria-label="Time remaining ${view.timeRemaining} seconds">${m}:${s}</div>
+    <p style="text-align:center;color:var(--muted)">Strikes: ${view.strikes}/3 &middot; Wires remaining: ${view.wiresRemaining}</p>`;
+  }
+
+  function renderGameScreen(view) {
+    let banner = '';
+    if (view.status === 'won') banner = '<div class="banner won" role="status">Bomb defused! Great relay work.</div>';
+    if (view.status === 'lost') banner = '<div class="banner lost" role="status">Bomb detonated. Reset and try a new puzzle.</div>';
+
+    let body = '';
+    if (view.yourRole === 'blind_operator') {
+      body = renderBlindOperator(view);
+    } else if (view.yourRole === 'relay_specialist' || view.yourRole === 'deaf_interpreter') {
+      body = view.yourRole === 'relay_specialist' ? renderRelaySpecialist(view) : renderDeafInterpreter(view);
+    } else if (view.yourRole === 'mute_reader') {
+      body = renderMuteReader(view);
+    }
+
+    return `
+      <div class="card">
+        <h2>${ROLE_INFO[view.yourRole].name} &mdash; Room ${view.roomId}</h2>
+        ${renderPlayerStatus(view)}
+        ${banner}
+        ${renderTimer(view)}
+        ${body}
+        <div class="row" style="margin-top:1rem">
+          <button class="secondary" id="reset-btn" type="button">Reset / New Puzzle</button>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderBlindOperator(view) {
+    const wires = (view.wires || []).map((w) => `
+      <button class="wire-btn" data-wire="${w.id}" data-cut="${w.cut}" ${w.cut || view.status !== 'active' ? 'disabled' : ''}
+        aria-label="Wire position ${w.position + 1}, shape ${w.shape}${w.cut ? ', already cut' : ''}">
+        ${SHAPE_SVGS[w.shape]}
+        <span class="visually-hidden">${w.shape}</span>
+        <span aria-hidden="true">#${w.position + 1}</span>
+      </button>
+    `).join('');
+    return `
+      <p>You cannot see color. Cut wires strictly by the instructions you're given.</p>
+      <div class="instruction-box" aria-live="polite">
+        ${view.instruction ? view.instruction : 'Waiting for an instruction from your teammate...'}
+      </div>
+      <div class="wire-grid" role="group" aria-label="Bomb wires">${wires}</div>
+    `;
+  }
+
+  function colorSwatch(color) {
+    return `<span class="wire-color-swatch" style="background:${color}" aria-hidden="true"></span>`;
+  }
+
+  function renderRelaySpecialist(view) {
+    const wires = (view.wires || []).map((w) => `
+      <div class="wire-btn" data-cut="${w.cut}" aria-label="Wire position ${w.position + 1}, ${w.color} ${w.shape}${w.cut ? ', cut' : ''}">
+        ${SHAPE_SVGS[w.shape]}
+        ${colorSwatch(w.color)}
+        <span aria-hidden="true">#${w.position + 1}</span>
+      </div>
+    `).join('');
+    return `
+      <p><strong>Rule:</strong> ${view.ruleText}</p>
+      <div class="wire-grid" role="group" aria-label="Full wire panel">${wires}</div>
+      ${renderInstructForm(view)}
+      ${renderLog(view)}
+    `;
+  }
+
+  function renderDeafInterpreter(view) {
+    const wires = (view.wires || []).map((w) => `
+      <div class="wire-btn" data-cut="${w.cut}" aria-label="Wire position ${w.position + 1}, shape ${w.shape}${w.cut ? ', cut' : ''}">
+        ${SHAPE_SVGS[w.shape]}
+        <span aria-hidden="true">#${w.position + 1}</span>
+      </div>
+    `).join('');
+    const symLog = (view.symbolLog || []).map((e) => `<div>${e.from} sent: <strong>${e.value}</strong></div>`).join('') || '<div>No symbols received yet.</div>';
+    return `
+      <p>You cannot see color or the rule. Read the incoming symbols from the Mute Clue Reader and write plain instructions for the Operator.</p>
+      <div class="wire-grid" role="group" aria-label="Wire shapes and positions (no color)">${wires}</div>
+      <h3>Incoming symbols</h3>
+      <div class="log" aria-live="polite">${symLog}</div>
+      ${renderInstructForm(view)}
+    `;
+  }
+
+  function renderMuteReader(view) {
+    const wires = (view.wires || []).map((w) => `
+      <div class="wire-btn" data-cut="${w.cut}" aria-label="Wire position ${w.position + 1}, ${w.color} ${w.shape}${w.cut ? ', cut' : ''}">
+        ${SHAPE_SVGS[w.shape]}
+        ${colorSwatch(w.color)}
+        <span aria-hidden="true">#${w.position + 1}</span>
+      </div>
+    `).join('');
+    const symbols = (view.symbolPalette || []).map((s) => `<button class="symbol-btn" data-symbol="${s}" ${view.status !== 'active' ? 'disabled' : ''}>${s}</button>`).join('');
+    return `
+      <p><strong>Rule:</strong> ${view.ruleText}</p>
+      <p>You cannot type free text. Send symbols to encode the rule for your Interpreter.</p>
+      <div class="wire-grid" role="group" aria-label="Full wire panel">${wires}</div>
+      <div class="symbol-grid" role="group" aria-label="Symbol palette">${symbols}</div>
+      ${renderLog(view)}
+    `;
+  }
+
+  function renderInstructForm(view) {
+    return `
+      <form id="instruct-form">
+        <label for="instruct-input">Instruction for the Blind Operator</label>
+        <input id="instruct-input" type="text" maxlength="140" autocomplete="off" value="${escapeAttr(view.instruction || '')}" ${view.status !== 'active' ? 'disabled' : ''}>
+        <button type="submit" ${view.status !== 'active' ? 'disabled' : ''}>Send instruction</button>
+      </form>
+    `;
+  }
+
+  function renderLog(view) {
+    const entries = (view.log || []).filter((e) => e.kind !== 'symbol' || view.yourRole === 'mute_reader');
+    if (!entries.length) return '';
+    return `<h3>Activity</h3><div class="log">${entries.map((e) => `<div>${e.from}: ${e.value}</div>`).join('')}</div>`;
+  }
+
+  function escapeAttr(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+  }
+
+  // ---- Render + event wiring -------------------------------------------
+
+  function render() {
+    const view = state.view;
+    if (!view) return;
+    if (!view.yourRole || view.status === 'lobby') {
+      root.innerHTML = renderRolePicker(view) + `<p id="conn-flag" class="conn-flag" hidden>Reconnecting...</p>`;
+      wireRolePicker(view);
+    } else {
+      root.innerHTML = renderGameScreen(view) + `<p id="conn-flag" class="conn-flag" hidden>Reconnecting...</p>`;
+      wireGameScreen(view);
+    }
+  }
+
+  function wireRolePicker(view) {
+    root.querySelectorAll('.role-btn').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        try {
+          await api('/api/room/role', { roomId: state.roomId, playerId: state.playerId, role: btn.dataset.role });
+        } catch (e) { alert(e.message); }
+      });
+    });
+    const startBtn = document.getElementById('start-btn');
+    if (startBtn) {
+      startBtn.addEventListener('click', async () => {
+        try {
+          await api('/api/room/start', { roomId: state.roomId, playerId: state.playerId });
+        } catch (e) { alert(e.message); }
+      });
+    }
+  }
+
+  function wireGameScreen(view) {
+    root.querySelectorAll('.wire-btn[data-wire]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        try {
+          await api('/api/room/cut', { roomId: state.roomId, playerId: state.playerId, wireId: btn.dataset.wire });
+        } catch (e) { /* transient errors surface via next state push */ }
+      });
+    });
+    root.querySelectorAll('.symbol-btn').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        await api('/api/room/symbol', { roomId: state.roomId, playerId: state.playerId, symbol: btn.dataset.symbol });
+      });
+    });
+    const form = document.getElementById('instruct-form');
+    if (form) {
+      form.addEventListener('submit', async (evt) => {
+        evt.preventDefault();
+        const input = document.getElementById('instruct-input');
+        await api('/api/room/instruct', { roomId: state.roomId, playerId: state.playerId, text: input.value });
+      });
+    }
+    const resetBtn = document.getElementById('reset-btn');
+    if (resetBtn) {
+      resetBtn.addEventListener('click', async () => {
+        await api('/api/room/reset', { roomId: state.roomId, playerId: state.playerId });
+      });
+    }
+  }
+
+  // ---- Boot -------------------------------------------------------------
+
+  const saved = loadSession();
+  if (saved) {
+    state.roomId = saved.roomId;
+    state.playerId = saved.playerId;
+    connectStream();
+  } else {
+    renderLobbyForm();
+  }
+})();
+</script>
+</body>
+</html>
