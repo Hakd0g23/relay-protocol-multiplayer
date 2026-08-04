@@ -284,12 +284,14 @@ function broadcast(room) {
   }
 }
 
-// Auto-lose sweep for rooms whose timer expired with nobody polling right now.
+// Tick every active room's synced countdown once a second, and catch timeouts
+// even when nobody is currently taking an action that would otherwise trigger
+// a broadcast.
 setInterval(() => {
   for (const room of rooms.values()) {
-    const wasActive = room.status === 'active';
+    if (room.status !== 'active') continue;
     room.checkTimeout();
-    if (wasActive && room.status === 'lost') broadcast(room);
+    broadcast(room);
   }
 }, 1000);
 
