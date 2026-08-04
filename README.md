@@ -55,8 +55,8 @@ This repo includes a `render.yaml` Blueprint.
 
 ## Assets
 
-- `assets/metal-panel.jpg` — a downscaled crop of ambientCG's "Metal006" material (CC0, no attribution required). https://ambientcg.com/a/Metal006
-- Font: "Share Tech Mono" via Google Fonts (SIL Open Font License).
+- Fonts: "Baloo 2" (headers/timer) and "Nunito" (body) via Google Fonts (SIL Open Font License).
+- Panel/casing colors are a warm cream + gumball-bright palette (CSS custom properties, hand-tuned), replacing the earlier dark industrial theme.
 - Bolt/rivet panel accents are hand-authored CSS (radial-gradient pseudo-elements), not an image asset.
 
 ## Known limitations

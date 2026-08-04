@@ -6,7 +6,7 @@
 <title>Relay Protocol</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700;800&family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet">
 <script type="importmap">
 {
   "imports": {
@@ -17,26 +17,30 @@
 </script>
 <style>
   :root {
-    --bg: #0d1117;
-    --panel: #161b22;
-    --border: #30363d;
-    --text: #e6edf3;
-    --muted: #8b949e;
-    --accent: #58a6ff;
-    --danger: #f85149;
-    --ok: #3fb950;
-    --warn: #d29922;
-    --font-mono: 'Share Tech Mono', ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+    --bg: #fff6e9;
+    --panel: #ffffff;
+    --panel-highlight: #fff0d6;
+    --border: #f0d9b5;
+    --text: #3a2e1f;
+    --muted: #9a8568;
+    --accent: #4ea8ff;
+    --accent2: #b980ff;
+    --danger: #ff5a5f;
+    --ok: #35c26a;
+    --warn: #ffd23f;
+    --font-mono: 'Nunito', ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+    --font-display: 'Baloo 2', var(--font-mono), sans-serif;
   }
   * { box-sizing: border-box; }
   html { -webkit-text-size-adjust: 100%; }
   body {
     margin: 0;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-family: 'Nunito', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     background: var(--bg);
     color: var(--text);
     min-height: 100vh;
   }
+  h1, h2, h3, .timer, .role-name { font-family: var(--font-display); }
   .hazard-strip {
     height: 8px;
     border-radius: 4px;
@@ -44,14 +48,14 @@
     background: repeating-linear-gradient(
       45deg,
       var(--warn) 0px, var(--warn) 10px,
-      #1a1300 10px, #1a1300 20px
+      #ffb703 10px, #ffb703 20px
     );
   }
   @media (prefers-reduced-motion: reduce) {
     * { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
   }
   @media (prefers-contrast: more) {
-    :root { --border: #ffffff; --muted: #cfd8e3; }
+    :root { --border: #6b4f1f; --muted: #5c4a30; }
   }
   .wrap { max-width: 720px; margin: 0 auto; padding: 1rem; }
   h1 { font-size: 1.4rem; margin: 0.2rem 0 0.4rem; }
@@ -67,28 +71,28 @@
     outline: 3px solid var(--accent); outline-offset: 2px;
   }
   button {
-    background: var(--accent); color: #0d1117; border: none; border-radius: 6px;
-    padding: 0.65rem 1rem; font-size: 1rem; font-weight: 600; cursor: pointer;
-    min-height: 44px;
+    background: var(--accent); color: #ffffff; border: none; border-radius: 10px;
+    padding: 0.65rem 1rem; font-size: 1rem; font-weight: 700; cursor: pointer;
+    min-height: 44px; font-family: var(--font-display);
+    box-shadow: 0 3px 0 rgba(0,0,0,0.12);
   }
   button:disabled { opacity: 0.5; cursor: not-allowed; }
-  button.secondary { background: transparent; border: 1px solid var(--border); color: var(--text); }
+  button.secondary { background: transparent; border: 2px solid var(--border); color: var(--text); box-shadow: none; }
   .row { display: flex; gap: 0.5rem; flex-wrap: wrap; }
   .card {
     background-color: var(--panel);
-    background-image: url('assets/metal-panel.jpg');
-    background-size: cover;
-    background-blend-mode: overlay;
+    background-image: radial-gradient(circle at 15% 10%, var(--panel-highlight), var(--panel) 65%);
     position: relative;
-    border: 1px solid var(--border); border-radius: 10px;
+    border: 2px solid var(--border); border-radius: 16px;
     padding: 1rem; margin-bottom: 1rem;
+    box-shadow: 0 4px 0 var(--border);
   }
   .card::before, .card::after {
     content: '';
     position: absolute; top: 8px; width: 14px; height: 14px;
-    background: radial-gradient(circle at 35% 35%, #4a5568, #1a1f28 70%);
+    background: radial-gradient(circle at 35% 35%, #ffe08a, var(--warn) 70%);
     border-radius: 50%;
-    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.08);
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.5);
   }
   .card::before { left: 8px; }
   .card::after { right: 8px; }
@@ -98,7 +102,7 @@
     display: block; width: 100%; text-align: left; background: var(--panel);
     border: 1px solid var(--border); border-radius: 8px; padding: 0.75rem;
   }
-  .role-btn[aria-pressed="true"] { border-color: var(--accent); background: #1c2733; }
+  .role-btn[aria-pressed="true"] { border-color: var(--accent); background: #eaf4ff; }
   .role-btn:disabled { opacity: 0.4; }
   .role-name { font-weight: 700; display: block; }
   .role-desc { color: var(--muted); font-size: 0.85rem; }
@@ -129,7 +133,7 @@
   .wire-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(90px, 1fr)); gap: 0.6rem; margin: 0.75rem 0; }
   .bomb3d-mount {
     width: 100%; aspect-ratio: 1 / 1; max-height: 60vh; margin: 0.75rem 0;
-    border: 2px solid var(--border); border-radius: 10px; overflow: hidden; background: #050708; touch-action: none;
+    border: 2px solid var(--border); border-radius: 10px; overflow: hidden; background: #eef2ff; touch-action: none;
   }
   .bomb3d-mount canvas { display: block; width: 100% !important; height: 100% !important; }
   .bomb3d-hint { color: var(--muted); font-size: 0.8rem; text-align: center; margin: 0.2rem 0 0; }
@@ -140,7 +144,7 @@
   .wire-btn[data-cut="true"] { opacity: 0.35; text-decoration: line-through; border-style: dashed; }
   .wire-shape { width: 34px; height: 34px; }
   .bomb-key {
-    font-family: var(--font-mono); background: #1c2733; border: 1px solid var(--accent);
+    font-family: var(--font-mono); background: #eaf4ff; border: 1px solid var(--accent);
     border-radius: 8px; padding: 0.5rem 0.75rem; letter-spacing: 0.08em;
   }
   .freq-readout, .freq-controls {
@@ -155,15 +159,15 @@
   .log { font-family: var(--font-mono); max-height: 140px; overflow-y: auto; font-size: 0.85rem; border-top: 1px solid var(--border); padding-top: 0.5rem; }
   .log div { padding: 0.15rem 0; color: var(--muted); }
   .banner { padding: 0.75rem; border-radius: 8px; margin-bottom: 1rem; font-weight: 600; text-align: center; }
-  .banner.won { background: #10331b; color: var(--ok); }
+  .banner.won { background: #dffbe8; color: #17914b; }
   .banner.lost {
-    background: repeating-linear-gradient(45deg, #3a1414 0px, #3a1414 12px, #200a0a 12px, #200a0a 24px);
+    background: repeating-linear-gradient(45deg, #ffe3e4 0px, #ffe3e4 12px, #ffd0d2 12px, #ffd0d2 24px);
     color: var(--danger);
     border: 1px solid var(--danger);
   }
   .instruction-box {
     font-family: var(--font-mono);
-    background: #1c2733; border: 1px solid var(--accent); border-radius: 8px; padding: 0.75rem; font-size: 1.05rem;
+    background: #eaf4ff; border: 1px solid var(--accent); border-radius: 8px; padding: 0.75rem; font-size: 1.05rem;
   }
   .visually-hidden {
     position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
@@ -177,10 +181,10 @@
   .wire-grid:focus-within { position: static; }
   .conn-flag { font-size: 0.8rem; color: var(--warn); }
   .mode-note {
-    background: #1c2733; border: 1px solid var(--border); border-radius: 8px;
+    background: #eaf4ff; border: 1px solid var(--border); border-radius: 8px;
     padding: 0.6rem 0.75rem; font-size: 0.9rem; color: var(--muted); margin-bottom: 1rem;
   }
-  .reveal-btn { width: 100%; margin-bottom: 0.6rem; background: var(--warn); color: #1a1300; }
+  .reveal-btn { width: 100%; margin-bottom: 0.6rem; background: var(--warn); color: #4a3300; }
   .reveal-btn[aria-pressed="true"] { background: var(--ok); }
   .gated-content { filter: blur(18px); transition: filter 0.15s; }
   .reveal-gate.revealed .gated-content { filter: none; }
@@ -366,9 +370,9 @@
 
   function renderModeNote(view) {
     if (view.playStyle === 'local') {
-      return `<p class="mode-note">Playing together in person: the whole challenge is relaying info only through this app. Sighted roles get a <strong>Show Panel</strong> button instead of an always-visible panel — keep it hidden except when you're deliberately checking it, and don't let other players glance at your screen.</p>`;
+      return `<p class="mode-note">Playing together in person: keep the Operator's screen and the Specialist's screen hidden from each other — the whole challenge is relaying info only through voice.</p>`;
     }
-    return `<p class="mode-note">Playing remotely: feel free to run a voice/video call alongside the app for any role that's allowed to talk freely. The Mute Clue Reader and Deaf Interpreter constraints are still enforced by the app either way.</p>`;
+    return `<p class="mode-note">Playing remotely: run a voice/video call alongside the app so the Operator and Specialist(s) can talk freely while looking at different information.</p>`;
   }
 
   function allRolesFilled(view) {
@@ -904,7 +908,7 @@ const WIRE_LENGTH = 0.88;
 // Matches the flat 2D panel's CSS color names — the Operator sees the real
 // bomb now (real KTANE: the defuser sees everything), so insulation is
 // colored, not neutral gray.
-const COLOR_HEX = { red: 0xf85149, blue: 0x58a6ff, yellow: 0xd29922, green: 0x3fb950, purple: 0xa371f7 };
+const COLOR_HEX = { red: 0xff5a5f, blue: 0x4ea8ff, yellow: 0xffd23f, green: 0x4cd787, purple: 0xb980ff };
 
 function buildWireGroup(shape, color) {
   const group = new THREE.Group();
@@ -1009,7 +1013,7 @@ function angleToValue(angle) {
 }
 
 function buildDialScene(freq) {
-  const discMat = new THREE.MeshStandardMaterial({ color: 0x232a35, roughness: 0.6, metalness: 0.3 });
+  const discMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.6, metalness: 0.15 });
   // Rotate the geometry itself (not the mesh) so the mesh transform stays
   // identity — children placed at local +z then correctly land toward the
   // camera (world +Z) instead of being thrown off along world -Y.
@@ -1017,7 +1021,7 @@ function buildDialScene(freq) {
   discGeo.rotateX(Math.PI / 2);
   const disc = new THREE.Mesh(discGeo, discMat);
 
-  const rimMat = new THREE.MeshStandardMaterial({ color: 0x11151b, roughness: 0.5, metalness: 0.6 });
+  const rimMat = new THREE.MeshStandardMaterial({ color: 0xf0d9b5, roughness: 0.5, metalness: 0.2 });
   const rim = new THREE.Mesh(new THREE.TorusGeometry(0.5, 0.02, 10, 40), rimMat);
   disc.add(rim);
 
@@ -1040,7 +1044,7 @@ function buildDialScene(freq) {
 
 function createContext() {
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x050708);
+  scene.background = new THREE.Color(0xfff6e9);
 
   const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
   camera.position.set(2.2, 1.6, 2.2);
@@ -1053,19 +1057,19 @@ function createContext() {
   controls.minDistance = 1.6;
   controls.maxDistance = 5;
 
-  scene.add(new THREE.AmbientLight(0x8899aa, 0.6));
+  scene.add(new THREE.AmbientLight(0xfff2d9, 0.75));
   const key = new THREE.DirectionalLight(0xffffff, 1.1);
   key.position.set(3, 4, 2);
   scene.add(key);
-  const rim = new THREE.DirectionalLight(0x3fb9ff, 0.4);
+  const rim = new THREE.DirectionalLight(0xb980ff, 0.35);
   rim.position.set(-3, -1, -2);
   scene.add(rim);
 
   const casingGeo = new THREE.BoxGeometry(1.6, 1.6, 1.6);
-  const casing = new THREE.Mesh(casingGeo, new THREE.MeshStandardMaterial({ color: 0x1c2129, roughness: 0.6, metalness: 0.4 }));
+  const casing = new THREE.Mesh(casingGeo, new THREE.MeshStandardMaterial({ color: 0xfff0d6, roughness: 0.55, metalness: 0.1 }));
   casing.rotation.y = 0.4;
   scene.add(casing);
-  casing.add(new THREE.LineSegments(new THREE.EdgesGeometry(casingGeo), new THREE.LineBasicMaterial({ color: 0x30363d })));
+  casing.add(new THREE.LineSegments(new THREE.EdgesGeometry(casingGeo), new THREE.LineBasicMaterial({ color: 0xf0d9b5 })));
 
   // Every face gets its own module mount (group + backing plate), matching
   // the same 6 face slots the crack overlay already uses. Two of these get
@@ -1087,7 +1091,7 @@ function createContext() {
     group.position.copy(cfg.pos);
     group.rotation.copy(cfg.rot);
     casing.add(group);
-    const plate = new THREE.Mesh(new THREE.PlaneGeometry(1.3, 1.3), new THREE.MeshStandardMaterial({ color: 0x11151b, roughness: 0.8 }));
+    const plate = new THREE.Mesh(new THREE.PlaneGeometry(1.3, 1.3), new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.7 }));
     group.add(plate);
     moduleMounts[face] = { group, plate, moduleType: null, wireIndex: {}, nodeIndex: {}, dial: null, signature: '' };
   }
