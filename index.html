@@ -203,7 +203,7 @@
     root.innerHTML = `
       <div class="card">
         <label for="name-input">Your name</label>
-        <input id="name-input" type="text" maxlength="24" autocomplete="off" value="${localStorage.getItem('relay-name') || ''}">
+        <input id="name-input" type="text" maxlength="24" autocomplete="off" value="${escapeAttr(localStorage.getItem('relay-name') || '')}">
 
         <label for="room-input">Room code (leave blank to create a new room)</label>
         <input id="room-input" type="text" maxlength="8" autocomplete="off">
@@ -245,7 +245,7 @@
     const taken = new Set(view.players.map((p) => p.role).filter(Boolean));
     return `
       <div class="card">
-        <h2>Room ${view.roomId}</h2>
+        <h2>Room ${escapeHtml(view.roomId)}</h2>
         <p>Share this room code with your teammate${view.mode === 3 ? 's' : ''}. ${view.mode}-player mode.</p>
         <div class="role-grid" role="group" aria-label="Choose your role">
           ${roles.map((r) => {
@@ -272,7 +272,7 @@
 
   function renderPlayerStatus(view) {
     return `<ul class="status-list" aria-label="Connected players">
-      ${view.players.map((p) => `<li class="${p.connected ? 'connected' : 'disconnected'}">${p.name} — ${p.role ? ROLE_INFO[p.role].name : 'choosing role'} ${p.connected ? '' : '(offline)'}</li>`).join('')}
+      ${view.players.map((p) => `<li class="${p.connected ? 'connected' : 'disconnected'}">${escapeHtml(p.name)} — ${p.role ? ROLE_INFO[p.role].name : 'choosing role'} ${p.connected ? '' : '(offline)'}</li>`).join('')}
     </ul>`;
   }
 
@@ -300,7 +300,7 @@
 
     return `
       <div class="card">
-        <h2>${ROLE_INFO[view.yourRole].name} &mdash; Room ${view.roomId}</h2>
+        <h2>${ROLE_INFO[view.yourRole].name} &mdash; Room ${escapeHtml(view.roomId)}</h2>
         ${renderPlayerStatus(view)}
         ${banner}
         ${renderTimer(view)}
@@ -324,7 +324,7 @@
     return `
       <p>You cannot see color. Cut wires strictly by the instructions you're given.</p>
       <div class="instruction-box" aria-live="polite">
-        ${view.instruction ? view.instruction : 'Waiting for an instruction from your teammate...'}
+        ${view.instruction ? escapeHtml(view.instruction) : 'Waiting for an instruction from your teammate...'}
       </div>
       <div class="wire-grid" role="group" aria-label="Bomb wires">${wires}</div>
     `;
@@ -357,7 +357,7 @@
         <span aria-hidden="true">#${w.position + 1}</span>
       </div>
     `).join('');
-    const symLog = (view.symbolLog || []).map((e) => `<div>${e.from} sent: <strong>${e.value}</strong></div>`).join('') || '<div>No symbols received yet.</div>';
+    const symLog = (view.symbolLog || []).map((e) => `<div>${escapeHtml(e.from)} sent: <strong>${escapeHtml(e.value)}</strong></div>`).join('') || '<div>No symbols received yet.</div>';
     return `
       <p>You cannot see color or the rule. Read the incoming symbols from the Mute Clue Reader and write plain instructions for the Operator.</p>
       <div class="wire-grid" role="group" aria-label="Wire shapes and positions (no color)">${wires}</div>
@@ -398,11 +398,20 @@
   function renderLog(view) {
     const entries = (view.log || []).filter((e) => e.kind !== 'symbol' || view.yourRole === 'mute_reader');
     if (!entries.length) return '';
-    return `<h3>Activity</h3><div class="log">${entries.map((e) => `<div>${e.from}: ${e.value}</div>`).join('')}</div>`;
+    return `<h3>Activity</h3><div class="log">${entries.map((e) => `<div>${escapeHtml(e.from)}: ${escapeHtml(e.value)}</div>`).join('')}</div>`;
   }
 
   function escapeAttr(s) {
     return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+  }
+
+  function escapeHtml(s) {
+    return String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
   }
 
   // ---- Render + event wiring -------------------------------------------

@@ -280,9 +280,10 @@ function requirePlayer(room, playerId) {
 const routes = {
   async 'POST /api/room/join'(req, res, url) {
     const body = await readBody(req);
-    const roomId = (body.roomId || '').trim().toUpperCase() || newId(3).toUpperCase();
+    const requestedRoomId = (body.roomId || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8);
+    const roomId = requestedRoomId || newId(3).toUpperCase();
     const mode = body.mode === 3 ? 3 : 2;
-    const name = (body.name || 'Player').slice(0, 24);
+    const name = (body.name || 'Player').replace(/[<>]/g, '').slice(0, 24) || 'Player';
     const room = getOrCreateRoom(roomId, mode);
     if (room.players.size >= room.mode && ![...room.players.values()].some(p => p.name === name)) {
       // allow rejoin by same connection later via playerId; block brand-new joins once full
