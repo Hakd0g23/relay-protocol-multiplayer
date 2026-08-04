@@ -139,6 +139,10 @@
   }
   .wire-btn[data-cut="true"] { opacity: 0.35; text-decoration: line-through; border-style: dashed; }
   .wire-shape { width: 34px; height: 34px; }
+  .bomb-key {
+    font-family: var(--font-mono); background: #1c2733; border: 1px solid var(--accent);
+    border-radius: 8px; padding: 0.5rem 0.75rem; letter-spacing: 0.08em;
+  }
   .freq-readout, .freq-controls {
     background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 0.75rem; margin: 0.75rem 0;
   }
@@ -203,21 +207,21 @@
   };
 
   const ROLE_INFO = {
-    blind_operator: {
-      name: 'Blind Bomb Operator',
-      desc: 'Sees wire shapes only, in grayscale, no color. Cuts wires based on instructions relayed to you.'
+    operator: {
+      name: 'Operator',
+      desc: "Sees the whole bomb — every color, every module — but has no manual. Acts on instructions from the Specialist(s)."
     },
-    relay_specialist: {
-      name: 'Relay Specialist',
-      desc: 'Sees the full color-coded wire panel and the defusal rule. Type instructions for the Operator.'
+    specialist: {
+      name: 'Specialist',
+      desc: 'Has the manual for every module — full rules, no bomb. Type instructions for the Operator.'
     },
-    mute_reader: {
-      name: 'Mute Clue Reader',
-      desc: 'Sees the full color-coded panel and the rule, but can only send fixed symbols — no free text.'
+    specialist_1: {
+      name: 'Specialist (Module A)',
+      desc: 'Has the manual for one of the two active modules only. Type instructions for the Operator.'
     },
-    deaf_interpreter: {
-      name: 'Deaf Interpreter',
-      desc: 'Cannot see the color panel or rule. Reads the incoming symbol stream and writes plain instructions for the Operator.'
+    specialist_2: {
+      name: 'Specialist (Module B)',
+      desc: 'Has the manual for the other active module. Blind to what Specialist (Module A) knows.'
     }
   };
 
@@ -333,7 +337,7 @@
 
   function renderRolePicker(view) {
     const roles = Object.keys(ROLE_INFO).filter((r) =>
-      (view.mode === 2 ? ['blind_operator', 'relay_specialist'] : ['blind_operator', 'mute_reader', 'deaf_interpreter']).includes(r)
+      (view.mode === 2 ? ['operator', 'specialist'] : ['operator', 'specialist_1', 'specialist_2']).includes(r)
     );
     const taken = new Set(view.players.map((p) => p.role).filter(Boolean));
     return `
@@ -394,15 +398,16 @@
     <p style="text-align:center;color:var(--muted)">Round ${view.round}${progress ? ' &middot; ' + progress : ''}</p>`;
   }
 
-  // Shared read-only single-module panel used by every sighted/partial-info
-  // role. `sighted` controls whether color/target info (the "secret" the
-  // blind operator never sees) is included.
-  function renderModulePanel(mod, sighted) {
+  // Shared read-only single-module panel. Color is always shown now — the
+  // Operator sees the full bomb same as a real defuser; the only thing
+  // withheld from anyone is the rule itself (that's the manual, added
+  // separately by the caller for whoever holds it).
+  function renderModulePanel(mod) {
     if (mod.moduleType === 'wire_cut') {
       const wires = (mod.wires || []).map((w) => `
-        <div class="wire-btn" data-cut="${w.cut}" aria-label="Wire position ${w.position + 1}, ${sighted ? w.color + ' ' : ''}${w.shape}${w.cut ? ', cut' : ''}">
+        <div class="wire-btn" data-cut="${w.cut}" aria-label="Wire position ${w.position + 1}, ${w.color} ${w.shape}${w.cut ? ', cut' : ''}">
           ${SHAPE_SVGS[w.shape]}
-          ${sighted ? colorSwatch(w.color) : ''}
+          ${colorSwatch(w.color)}
           <span aria-hidden="true">#${w.position + 1}</span>
         </div>
       `).join('');
@@ -411,19 +416,20 @@
     if (mod.moduleType === 'handshake_grid' && mod.grid) {
       const g = mod.grid;
       const nodes = g.nodes.map((n) => `
-        <div class="wire-btn" data-cut="${n.pressed}" aria-label="Node row ${n.row + 1} column ${n.col + 1}, ${sighted ? n.color + ' ' : ''}${n.shape}${n.pressed ? ', pressed' : ''}">
+        <div class="wire-btn" data-cut="${n.pressed}" aria-label="Node row ${n.row + 1} column ${n.col + 1}, ${n.color} ${n.shape}${n.pressed ? ', pressed' : ''}">
           ${SHAPE_SVGS[n.shape]}
-          ${sighted ? colorSwatch(n.color) : ''}
+          ${colorSwatch(n.color)}
         </div>
       `).join('');
       return `<div class="wire-grid" role="group" aria-label="Handshake grid" style="grid-template-columns:repeat(${g.size}, 1fr)">${nodes}</div>`;
     }
     if (mod.moduleType === 'frequency_lock' && mod.freq) {
       const f = mod.freq;
+      const hasTarget = f.targetLow != null;
       return `
         <div class="freq-readout">
           <p>Channel key: <strong>${f.channelLabel}</strong></p>
-          ${sighted ? `<p>Target band: <strong>${f.targetLow}&ndash;${f.targetHigh}</strong></p>` : ''}
+          ${hasTarget ? `<p>Target band: <strong>${f.targetLow}&ndash;${f.targetHigh}</strong></p>` : ''}
           <p>Current dial reading: <strong>${f.dialValue}</strong></p>
         </div>
       `;
@@ -445,12 +451,10 @@
     if (view.status === 'lost') banner = '<div class="banner lost" role="status">Quarantine breach. Reset and try a new signal.</div>';
 
     let body = '';
-    if (view.yourRole === 'blind_operator') {
-      body = renderBlindOperator(view);
-    } else if (view.yourRole === 'relay_specialist' || view.yourRole === 'deaf_interpreter') {
-      body = view.yourRole === 'relay_specialist' ? renderRelaySpecialist(view) : renderDeafInterpreter(view);
-    } else if (view.yourRole === 'mute_reader') {
-      body = renderMuteReader(view);
+    if (view.yourRole === 'operator') {
+      body = renderOperator(view);
+    } else if (['specialist', 'specialist_1', 'specialist_2'].includes(view.yourRole)) {
+      body = renderSpecialist(view);
     }
 
     return `
@@ -467,15 +471,31 @@
     `;
   }
 
+  function colorSwatch(color) {
+    return `<span class="wire-color-swatch" style="background:${color}" aria-hidden="true"></span>`;
+  }
+
+  function bombKeyBanner(view) {
+    if (!view.bombKey) return '';
+    return `<p class="bomb-key">Bomb key: <strong>${escapeHtml(view.bombKey)}</strong></p>`;
+  }
+
+  function formatRuleText(text) {
+    return escapeHtml(text).replace(/\n/g, '<br>');
+  }
+
+  // The Operator sees full color everywhere now (real KTANE: the defuser
+  // sees the actual bomb) — only the accessible fallback controls, not the
+  // info shown, differ from a Specialist's read-only panel.
   function renderOperatorModuleFallback(mod, view) {
     const active = view.status === 'active' && !mod.solved;
     if (mod.moduleType === 'wire_cut') {
       return `<div class="wire-grid">
         ${(mod.wires || []).map((w) => `
           <button class="wire-btn visually-hidden-focusable" data-wire="${w.id}" data-face="${mod.face}" data-cut="${w.cut}" ${w.cut || !active ? 'disabled' : ''}
-            aria-label="${FACE_LABELS[mod.face]} face, wire position ${w.position + 1}, shape ${w.shape}${w.cut ? ', already cut' : ''}">
+            aria-label="${FACE_LABELS[mod.face]} face, wire position ${w.position + 1}, ${w.color} ${w.shape}${w.cut ? ', already cut' : ''}">
             ${SHAPE_SVGS[w.shape]}
-            <span class="visually-hidden">${w.shape}</span>
+            ${colorSwatch(w.color)}
             <span aria-hidden="true">#${w.position + 1}</span>
           </button>
         `).join('')}
@@ -486,9 +506,9 @@
       return `<div class="wire-grid" style="grid-template-columns:repeat(${g.size}, 1fr)">
         ${g.nodes.map((n) => `
           <button class="wire-btn visually-hidden-focusable" data-node="${n.id}" data-face="${mod.face}" data-cut="${n.pressed}" ${n.pressed || !active ? 'disabled' : ''}
-            aria-label="${FACE_LABELS[mod.face]} face, node row ${n.row + 1} column ${n.col + 1}, shape ${n.shape}${n.pressed ? ', already pressed' : ''}">
+            aria-label="${FACE_LABELS[mod.face]} face, node row ${n.row + 1} column ${n.col + 1}, ${n.color} ${n.shape}${n.pressed ? ', already pressed' : ''}">
             ${SHAPE_SVGS[n.shape]}
-            <span class="visually-hidden">${n.shape}</span>
+            ${colorSwatch(n.color)}
           </button>
         `).join('')}
       </div>`;
@@ -507,7 +527,12 @@
     return '';
   }
 
-  function renderBlindOperator(view) {
+  function instructionChannels(view) {
+    const specRoles = view.mode === 2 ? ['specialist'] : ['specialist_1', 'specialist_2'];
+    return specRoles.map((r) => ({ role: r, label: ROLE_INFO[r].name, text: (view.instructions || {})[r] || '' }));
+  }
+
+  function renderOperator(view) {
     const mount = `
       <div class="bomb3d-mount" id="bomb3d-mount" role="group" aria-label="3D bomb view" aria-hidden="true"></div>
       <p class="bomb3d-hint" aria-hidden="true">Drag to rotate — the cube has ${view.modulesTotal} modules, one per face. Click a wire, node, or dial to act on it, or use Lock In for a dial.</p>
@@ -516,60 +541,37 @@
       ${moduleHeading(mod)}
       ${renderOperatorModuleFallback(mod, view)}
     `).join('');
+    const channels = instructionChannels(view).map((c) => `
+      <div class="instruction-box" aria-live="polite">
+        <strong>${escapeHtml(c.label)}:</strong> ${c.text ? escapeHtml(c.text) : 'Waiting for an instruction...'}
+      </div>
+    `).join('');
 
     return `
-      <p>You cannot see color. Act strictly on the instructions you're given.</p>
-      <div class="instruction-box" aria-live="polite">
-        ${view.instruction ? escapeHtml(view.instruction) : 'Waiting for an instruction from your teammate...'}
-      </div>
+      <p>You see the whole bomb, every color — but you have no manual. Act strictly on the instructions you're given.</p>
+      ${channels}
       ${mount}
       ${modules}
     `;
   }
 
-  function colorSwatch(color) {
-    return `<span class="wire-color-swatch" style="background:${color}" aria-hidden="true"></span>`;
-  }
-
-  function renderRelaySpecialist(view) {
-    const panel = (view.modules || []).map((mod) => `
+  function renderSpecialist(view) {
+    const role = view.yourRole;
+    const visibleModules = (view.modules || []).filter((m) => !m.hidden);
+    const panel = visibleModules.map((mod) => `
       ${moduleHeading(mod)}
-      <p><strong>Rule:</strong> ${mod.ruleText}</p>
-      ${renderModulePanel(mod, true)}
+      <p><strong>Rule:</strong> ${formatRuleText(mod.ruleText)}</p>
+      ${renderModulePanel(mod)}
     `).join('<hr>');
+    const scopeNote = role === 'specialist'
+      ? 'You have the manual for every module.'
+      : `You have the manual for one module only — you cannot see what ${role === 'specialist_1' ? 'Specialist (Module B)' : 'Specialist (Module A)'} knows.`;
+
     return `
+      <p>${scopeNote} You cannot act on the bomb — type instructions for the Operator.</p>
+      ${bombKeyBanner(view)}
       ${renderGatedPanel(view, panel)}
       ${renderInstructForm(view)}
-      ${renderLog(view)}
-    `;
-  }
-
-  function renderDeafInterpreter(view) {
-    const symLog = (view.symbolLog || []).map((e) => `<div>${escapeHtml(e.from)} sent: <strong>${escapeHtml(e.value)}</strong></div>`).join('') || '<div>No symbols received yet.</div>';
-    const panel = (view.modules || []).map((mod) => `
-      ${moduleHeading(mod)}
-      ${renderModulePanel(mod, false)}
-    `).join('');
-    return `
-      <p>You cannot see color or the rule. Read the incoming symbols from the Mute Clue Reader and write plain instructions for the Operator.</p>
-      ${panel}
-      <h3>Incoming symbols</h3>
-      <div class="log" aria-live="polite">${symLog}</div>
-      ${renderInstructForm(view)}
-    `;
-  }
-
-  function renderMuteReader(view) {
-    const symbols = (view.symbolPalette || []).map((s) => `<button class="symbol-btn" data-symbol="${s}" ${view.status !== 'active' ? 'disabled' : ''}>${s}</button>`).join('');
-    const panel = (view.modules || []).map((mod) => `
-      ${moduleHeading(mod)}
-      <p><strong>Rule:</strong> ${mod.ruleText}</p>
-      ${renderModulePanel(mod, true)}
-    `).join('<hr>');
-    return `
-      <p>You cannot type free text. Send symbols to encode the rule for your Interpreter.</p>
-      ${renderGatedPanel(view, panel)}
-      <div class="symbol-grid" role="group" aria-label="Symbol palette">${symbols}</div>
       ${renderLog(view)}
     `;
   }
@@ -586,17 +588,18 @@
   }
 
   function renderInstructForm(view) {
+    const myText = (view.instructions || {})[view.yourRole] || '';
     return `
       <form id="instruct-form">
-        <label for="instruct-input">Instruction for the Blind Operator</label>
-        <input id="instruct-input" type="text" maxlength="140" autocomplete="off" value="${escapeAttr(view.instruction || '')}" ${view.status !== 'active' ? 'disabled' : ''}>
+        <label for="instruct-input">Instruction for the Operator</label>
+        <input id="instruct-input" type="text" maxlength="140" autocomplete="off" value="${escapeAttr(myText)}" ${view.status !== 'active' ? 'disabled' : ''}>
         <button type="submit" ${view.status !== 'active' ? 'disabled' : ''}>Send instruction</button>
       </form>
     `;
   }
 
   function renderLog(view) {
-    const entries = (view.log || []).filter((e) => e.kind !== 'symbol' || view.yourRole === 'mute_reader');
+    const entries = view.log || [];
     if (!entries.length) return '';
     return `<h3>Activity</h3><div class="log">${entries.map((e) => `<div>${escapeHtml(e.from)}: ${escapeHtml(e.value)}</div>`).join('')}</div>`;
   }
@@ -707,11 +710,6 @@
         try {
           await api('/api/room/tune', { roomId: state.roomId, playerId: state.playerId, value, lock: true, face });
         } catch (e) { /* transient errors surface via next state push */ }
-      });
-    });
-    root.querySelectorAll('.symbol-btn').forEach((btn) => {
-      btn.addEventListener('click', async () => {
-        await api('/api/room/symbol', { roomId: state.roomId, playerId: state.playerId, symbol: btn.dataset.symbol });
       });
     });
     const form = document.getElementById('instruct-form');
@@ -903,13 +901,16 @@ function buildShapeGlyph(shapeName) {
 const WIRE_RADIUS = 0.045;
 const WIRE_LENGTH = 0.88;
 
-function buildWireGroup(shape) {
+// Matches the flat 2D panel's CSS color names — the Operator sees the real
+// bomb now (real KTANE: the defuser sees everything), so insulation is
+// colored, not neutral gray.
+const COLOR_HEX = { red: 0xf85149, blue: 0x58a6ff, yellow: 0xd29922, green: 0x3fb950, purple: 0xa371f7 };
+
+function buildWireGroup(shape, color) {
   const group = new THREE.Group();
   group.rotation.z = (Math.random() - 0.5) * 0.05;
 
-  // The Operator is deliberately colorblind by design — insulation is neutral
-  // gray, and shape (not color) is the only thing distinguishing wires.
-  const coreMat = new THREE.MeshStandardMaterial({ color: 0x7d8590, roughness: 0.8, metalness: 0.05 });
+  const coreMat = new THREE.MeshStandardMaterial({ color: COLOR_HEX[color] || 0x7d8590, roughness: 0.6, metalness: 0.1 });
   const core = new THREE.Mesh(new THREE.CylinderGeometry(WIRE_RADIUS, WIRE_RADIUS, WIRE_LENGTH, 16), coreMat);
   group.add(core);
 
@@ -959,9 +960,9 @@ function severWire(entry) {
 }
 
 // --- Handshake grid: a wall of pressable node-buttons -----------------
-function buildNodeButton(shape) {
+function buildNodeButton(shape, color) {
   const group = new THREE.Group();
-  const baseMat = new THREE.MeshStandardMaterial({ color: 0x2a313c, roughness: 0.7, metalness: 0.2 });
+  const baseMat = new THREE.MeshStandardMaterial({ color: COLOR_HEX[color] || 0x2a313c, roughness: 0.6, metalness: 0.15 });
   const baseGeo = new THREE.CylinderGeometry(0.12, 0.12, 0.06, 20);
   baseGeo.rotateX(Math.PI / 2); // rotate geometry, not mesh, so the glyph child's +z lands toward the camera
   const base = new THREE.Mesh(baseGeo, baseMat);
@@ -1177,7 +1178,7 @@ function buildWireCutInMount(mount, wires) {
   const spacing = 1.3 / (count + 1);
   wires.forEach((w, i) => {
     const x = -1.3 / 2 + spacing * (i + 1);
-    const { group, core, glyph } = buildWireGroup(w.shape);
+    const { group, core, glyph } = buildWireGroup(w.shape, w.color);
     group.position.set(x, 0, 0.03);
     mount.group.add(group);
     const entry = { group, core, glyph, cut: false };
@@ -1194,7 +1195,7 @@ function buildHandshakeInMount(mount, grid) {
   grid.nodes.forEach((n) => {
     const x = -1.2 / 2 + spacing * (n.col + 1);
     const y = 1.2 / 2 - spacing * (n.row + 1);
-    const { group, base, glyph } = buildNodeButton(n.shape);
+    const { group, base, glyph } = buildNodeButton(n.shape, n.color);
     group.position.set(x, y, 0.03);
     mount.group.add(group);
     const entry = { group, base, glyph, pressed: false };

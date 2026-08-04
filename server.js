@@ -8,11 +8,15 @@ const TIMER_SECONDS = 90;
 const WIRE_COUNT = 5;
 const SHAPES = ['circle', 'triangle', 'square', 'diamond', 'star'];
 const COLORS = ['red', 'blue', 'yellow', 'green', 'purple'];
-const SYMBOLS = ['▲', '●', '■', '★', '◆', '✦', '✚', '✖'];
 
+// Real KTANE structure: the Operator sees the whole bomb (every color,
+// every module) but has no manual. Specialists hold the manual (the rule)
+// but never see the bomb itself. In 3-player mode the two active modules
+// split across two specialists, each blind to the other's module — the
+// Operator has to run two relay channels at once instead of one.
 const ROLE_SETS = {
-  2: ['blind_operator', 'relay_specialist'],
-  3: ['blind_operator', 'mute_reader', 'deaf_interpreter'],
+  2: ['operator', 'specialist'],
+  3: ['operator', 'specialist_1', 'specialist_2'],
 };
 
 /** @type {Map<string, Room>} */
@@ -52,7 +56,7 @@ function timerForRound(round) {
 }
 
 function variantPoolForRound(round) {
-  const pool = ['sequence', 'color_group', 'shape_pair'];
+  const pool = ['sequence', 'color_group', 'shape_pair', 'manual_lookup'];
   if (round >= 3) pool.push('position_parity', 'color_exclusion');
   return pool;
 }
@@ -80,11 +84,53 @@ function makeWires(count, forceShapePair) {
   }));
 }
 
-function generateWireCutModule(round = 1) {
+// KTANE-style decision tree: sighted roles get the RAW conditional logic
+// plus the shared bomb key, not a resolved answer — they have to evaluate
+// it themselves against the actual wire panel, same as the real manual.
+function resolveManualLookup(wires, bombKey) {
+  const lastDigitMatch = bombKey.match(/\d(?!.*\d)/);
+  const lastDigit = lastDigitMatch ? parseInt(lastDigitMatch[0], 10) : 0;
+  const odd = lastDigit % 2 === 1;
+  const last = wires[wires.length - 1];
+  const redCount = wires.filter((w) => w.color === 'red').length;
+  const blueWires = wires.filter((w) => w.color === 'blue');
+
+  const steps = [
+    '1. If there are NO red wires, cut the SECOND wire.',
+    '2. Else if the LAST wire is yellow, cut the LAST wire.',
+    '3. Else if there is more than one blue wire, cut the LAST blue wire.',
+    `4. Else if the bomb key's last digit is ODD, cut the LAST wire.`,
+    '5. Otherwise, cut the SECOND wire.',
+  ];
+
+  let target;
+  if (redCount === 0) target = wires[1] || wires[0];
+  else if (last.color === 'yellow') target = last;
+  else if (blueWires.length > 1) target = blueWires[blueWires.length - 1];
+  else if (odd) target = last;
+  else target = wires[1] || wires[0];
+
+  return { target, steps };
+}
+
+function generateWireCutModule(round = 1, bombKey = 'AAAAAA') {
   const wireCount = wireCountForRound(round);
   const variant = pick(variantPoolForRound(round));
   const wires = makeWires(wireCount, variant === 'shape_pair');
   const totalWires = wires.length;
+
+  if (variant === 'manual_lookup') {
+    const { target, steps } = resolveManualLookup(wires, bombKey);
+    return {
+      moduleType: 'wire_cut',
+      variant,
+      wires,
+      ruleText: `MANUAL LOOKUP — bomb key ${bombKey}. Work out the target wire yourself from this decision tree, checked in order (first match wins):\n${steps.join(' ')}`,
+      requiredFirst: [target.id],
+      exactSet: true,
+      totalWires,
+    };
+  }
 
   if (variant === 'sequence') {
     const order = shuffle(wires.map((w) => w.id));
@@ -256,19 +302,26 @@ function generateFrequencyModule(round = 1) {
 const FACES = ['front', 'back', 'right', 'left', 'top', 'bottom'];
 const MODULE_COUNT = 2;
 
-function generateOneModule(moduleType, round) {
+function generateOneModule(moduleType, round, bombKey) {
   if (moduleType === 'handshake_grid') return generateHandshakeModule(round);
   if (moduleType === 'frequency_lock') return generateFrequencyModule(round);
-  return generateWireCutModule(round);
+  return generateWireCutModule(round, bombKey);
+}
+
+const BOMB_KEY_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ123456789'; // no O/0/I to avoid ambiguity
+function generateBombKey() {
+  let key = '';
+  for (let i = 0; i < 6; i++) key += BOMB_KEY_CHARS[Math.floor(Math.random() * BOMB_KEY_CHARS.length)];
+  return key;
 }
 
 // Two modules per round, each on a distinct random face of the same cube —
 // the player has to rotate to find both, same as a real multi-module bomb.
-function generateModules(round = 1) {
+function generateModules(round = 1, bombKey = 'AAAAAA') {
   const types = shuffle(['wire_cut', 'handshake_grid', 'frequency_lock']).slice(0, MODULE_COUNT);
   const faces = shuffle(FACES).slice(0, MODULE_COUNT);
   return types.map((moduleType, i) => {
-    const mod = generateOneModule(moduleType, round);
+    const mod = generateOneModule(moduleType, round, bombKey);
     mod.face = faces[i];
     mod.solved = false;
     return mod;
@@ -336,12 +389,13 @@ class Room {
     this.players = new Map(); // playerId -> {id, name, role, connected}
     this.status = 'lobby'; // lobby | active | won | lost
     this.modules = []; // active modules this round, each on a distinct cube face
+    this.bombKey = null; // shared "serial number"-style key sighted roles cross-reference
     this.startedAt = null;
     this.spread = 0; // 0-100 containment spread; reaching 100 is a quarantine breach (loss)
     this.round = 1; // increments on each win, resets to 1 on a loss
     this.timerDuration = TIMER_SECONDS;
     this.log = []; // {from, kind, value, at}
-    this.instruction = ''; // latest plain-text instruction for the blind operator
+    this.instructions = { specialist: '', specialist_1: '', specialist_2: '' }; // per-specialist channel to the Operator
     this.connections = new Map(); // playerId -> res (SSE)
     this.createdAt = Date.now();
   }
@@ -404,48 +458,51 @@ function buildView(room, playerId) {
     spread: room.spread,
     modulesSolved: room.modules.filter((m) => m.solved).length,
     modulesTotal: room.modules.length,
-    instruction: room.instruction,
+    instructions: room.instructions,
     log: room.log.slice(-25),
     serverTime: Date.now(),
   };
 
   if (!room.modules.length || room.status === 'lobby') return base;
 
-  const sightedRoles = ['relay_specialist', 'mute_reader'];
-  const sighted = sightedRoles.includes(role);
-  const blind = role === 'blind_operator';
-  const deaf = role === 'deaf_interpreter';
+  const isOperator = role === 'operator';
 
-  base.modules = room.modules.map((m) => buildModuleView(m, { sighted, blind, deaf }));
+  // Which module indices this role can see: the Operator and the single
+  // 2-player Specialist see everything; in 3-player mode each specialist
+  // owns exactly one module and is blind to the other.
+  const canSeeIndex = (i) => {
+    if (isOperator || role === 'specialist') return true;
+    if (role === 'specialist_1') return i === 0;
+    if (role === 'specialist_2') return i === 1;
+    return false;
+  };
 
-  if (role === 'mute_reader') base.symbolPalette = SYMBOLS;
-  if (deaf) base.symbolLog = room.log.filter((e) => e.kind === 'symbol').slice(-25);
+  base.modules = room.modules.map((m, i) => {
+    if (!canSeeIndex(i)) return { face: m.face, moduleType: m.moduleType, solved: m.solved, hidden: true };
+    return buildModuleView(m, { showRule: !isOperator });
+  });
+  if (!isOperator) base.bombKey = room.bombKey;
 
   return base;
 }
 
-function buildModuleView(m, { sighted, blind, deaf }) {
+function buildModuleView(m, { showRule }) {
   const out = { face: m.face, moduleType: m.moduleType, solved: m.solved };
 
+  // The Operator always sees the full bomb — every color, every shape —
+  // same as a real defuser looking right at it. What they never get is the
+  // rule: that's the manual, and only a Specialist holds it.
   if (m.moduleType === 'wire_cut') {
-    if (blind || deaf) {
-      out.wires = m.wires.map((w) => ({ id: w.id, position: w.position, shape: w.shape, cut: w.cut }));
-    } else if (sighted) {
-      out.wires = m.wires.map((w) => ({ id: w.id, position: w.position, shape: w.shape, color: w.color, cut: w.cut }));
-      out.ruleText = m.ruleText;
-    }
+    out.wires = m.wires.map((w) => ({ id: w.id, position: w.position, shape: w.shape, color: w.color, cut: w.cut }));
+    if (showRule) out.ruleText = m.ruleText;
   } else if (m.moduleType === 'handshake_grid') {
-    if (blind || deaf) {
-      out.grid = { size: m.size, nodes: m.nodes.map((n) => ({ id: n.id, row: n.row, col: n.col, shape: n.shape, pressed: n.pressed })) };
-    } else if (sighted) {
-      out.grid = { size: m.size, nodes: m.nodes.map((n) => ({ id: n.id, row: n.row, col: n.col, shape: n.shape, color: n.color, pressed: n.pressed })) };
-      out.ruleText = m.ruleText;
-    }
+    out.grid = { size: m.size, nodes: m.nodes.map((n) => ({ id: n.id, row: n.row, col: n.col, shape: n.shape, color: n.color, pressed: n.pressed })) };
+    if (showRule) out.ruleText = m.ruleText;
   } else if (m.moduleType === 'frequency_lock') {
-    if (blind || deaf) {
-      out.freq = { channelLabel: m.channelLabel, dialValue: m.dialValue };
-    } else if (sighted) {
-      out.freq = { channelLabel: m.channelLabel, dialValue: m.dialValue, targetLow: m.targetLow, targetHigh: m.targetHigh };
+    out.freq = { channelLabel: m.channelLabel, dialValue: m.dialValue };
+    if (showRule) {
+      out.freq.targetLow = m.targetLow;
+      out.freq.targetHigh = m.targetHigh;
       out.ruleText = m.ruleText;
     }
   }
@@ -555,11 +612,12 @@ const routes = {
       return sendJson(res, 400, { error: 'Every role must be filled before starting.' });
     }
     room.timerDuration = timerForRound(room.round);
-    room.modules = generateModules(room.round);
+    room.bombKey = generateBombKey();
+    room.modules = generateModules(room.round, room.bombKey);
     room.startedAt = Date.now();
     room.status = 'active';
     room.spread = 0;
-    room.instruction = '';
+    room.instructions = { specialist: '', specialist_1: '', specialist_2: '' };
     room.log = [];
     broadcast(room);
     sendJson(res, 200, { ok: true });
@@ -576,22 +634,8 @@ const routes = {
     room.startedAt = null;
     room.status = 'lobby';
     room.spread = 0;
-    room.instruction = '';
+    room.instructions = { specialist: '', specialist_1: '', specialist_2: '' };
     room.log = [];
-    broadcast(room);
-    sendJson(res, 200, { ok: true });
-  },
-
-  async 'POST /api/room/symbol'(req, res) {
-    const body = await readBody(req);
-    const room = rooms.get(body.roomId);
-    if (!room) return sendJson(res, 404, { error: 'Room not found.' });
-    const player = requirePlayer(room, body.playerId);
-    if (!player || player.role !== 'mute_reader') {
-      return sendJson(res, 403, { error: 'Only the Mute Clue Reader can send symbols.' });
-    }
-    if (!SYMBOLS.includes(body.symbol)) return sendJson(res, 400, { error: 'Unknown symbol.' });
-    room.log.push({ from: player.name, kind: 'symbol', value: body.symbol, at: Date.now() });
     broadcast(room);
     sendJson(res, 200, { ok: true });
   },
@@ -601,12 +645,12 @@ const routes = {
     const room = rooms.get(body.roomId);
     if (!room) return sendJson(res, 404, { error: 'Room not found.' });
     const player = requirePlayer(room, body.playerId);
-    const allowed = ['relay_specialist', 'deaf_interpreter'];
+    const allowed = ['specialist', 'specialist_1', 'specialist_2'];
     if (!player || !allowed.includes(player.role)) {
-      return sendJson(res, 403, { error: 'Only the Relay Specialist or Deaf Interpreter can send instructions.' });
+      return sendJson(res, 403, { error: 'Only a Specialist can send instructions.' });
     }
     const text = (body.text || '').slice(0, 140);
-    room.instruction = text;
+    room.instructions[player.role] = text;
     room.log.push({ from: player.name, kind: 'instruction', value: text, at: Date.now() });
     broadcast(room);
     sendJson(res, 200, { ok: true });
@@ -617,7 +661,7 @@ const routes = {
     const room = rooms.get(body.roomId);
     if (!room) return sendJson(res, 404, { error: 'Room not found.' });
     const player = requirePlayer(room, body.playerId);
-    if (!player || player.role !== 'blind_operator') {
+    if (!player || player.role !== 'operator') {
       return sendJson(res, 403, { error: 'Only the Blind Bomb Operator can cut wires.' });
     }
     const mod = findActiveModule(room, body.face, 'wire_cut');
@@ -648,7 +692,7 @@ const routes = {
     const room = rooms.get(body.roomId);
     if (!room) return sendJson(res, 404, { error: 'Room not found.' });
     const player = requirePlayer(room, body.playerId);
-    if (!player || player.role !== 'blind_operator') {
+    if (!player || player.role !== 'operator') {
       return sendJson(res, 403, { error: 'Only the Blind Bomb Operator can press nodes.' });
     }
     const mod = findActiveModule(room, body.face, 'handshake_grid');
@@ -681,7 +725,7 @@ const routes = {
     const room = rooms.get(body.roomId);
     if (!room) return sendJson(res, 404, { error: 'Room not found.' });
     const player = requirePlayer(room, body.playerId);
-    if (!player || player.role !== 'blind_operator') {
+    if (!player || player.role !== 'operator') {
       return sendJson(res, 403, { error: 'Only the Blind Bomb Operator can tune the dial.' });
     }
     const mod = findActiveModule(room, body.face, 'frequency_lock');
