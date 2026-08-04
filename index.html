@@ -133,6 +133,14 @@
     position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
   }
   .conn-flag { font-size: 0.8rem; color: var(--warn); }
+  .mode-note {
+    background: #1c2733; border: 1px solid var(--border); border-radius: 8px;
+    padding: 0.6rem 0.75rem; font-size: 0.9rem; color: var(--muted); margin-bottom: 1rem;
+  }
+  .reveal-btn { width: 100%; margin-bottom: 0.6rem; background: var(--warn); color: #1a1300; }
+  .reveal-btn[aria-pressed="true"] { background: var(--ok); }
+  .gated-content { filter: blur(18px); transition: filter 0.15s; }
+  .reveal-gate.revealed .gated-content { filter: none; }
 </style>
 </head>
 <body>
@@ -181,6 +189,7 @@
     view: null,
     es: null,
     reconnectDelay: 1000,
+    revealed: false,
   };
 
   const root = document.getElementById('root');
@@ -252,6 +261,14 @@
           </div>
         </fieldset>
 
+        <fieldset>
+          <legend>How are you playing?</legend>
+          <div class="row" role="radiogroup" aria-label="Play style">
+            <label><input type="radio" name="playStyle" value="online" checked> Online (separate locations)</label>
+            <label><input type="radio" name="playStyle" value="local"> Same room (playing together in person)</label>
+          </div>
+        </fieldset>
+
         <button id="join-btn" type="button">Join / Create Room</button>
         <p id="join-error" role="alert" style="color:var(--danger)"></p>
       </div>
@@ -260,9 +277,10 @@
       const name = document.getElementById('name-input').value.trim() || 'Player';
       const roomId = document.getElementById('room-input').value.trim();
       const mode = Number(document.querySelector('input[name=mode]:checked').value);
+      const playStyle = document.querySelector('input[name=playStyle]:checked').value;
       localStorage.setItem('relay-name', name);
       try {
-        const data = await api('/api/room/join', { name, roomId, mode });
+        const data = await api('/api/room/join', { name, roomId, mode, playStyle });
         state.roomId = data.roomId;
         state.playerId = data.playerId;
         state.mode = data.mode;
@@ -283,6 +301,7 @@
       <div class="card">
         <h2>Room ${escapeHtml(view.roomId)}</h2>
         <p>Share this room code with your teammate${view.mode === 3 ? 's' : ''}. ${view.mode}-player mode.</p>
+        ${renderModeNote(view)}
         ${view.round > 1 ? `<p style="color:var(--warn)">Round ${view.round} — more wires, less time, and new rule types unlock as you win.</p>` : ''}
         <div class="role-grid" role="group" aria-label="Choose your role">
           ${roles.map((r) => {
@@ -300,6 +319,13 @@
         ${!allRolesFilled(view) ? '<p class="conn-flag">Waiting for every role to be filled.</p>' : ''}
       </div>
     `;
+  }
+
+  function renderModeNote(view) {
+    if (view.playStyle === 'local') {
+      return `<p class="mode-note">Playing together in person: the whole challenge is relaying info only through this app. Sighted roles get a <strong>Show Panel</strong> button instead of an always-visible panel — keep it hidden except when you're deliberately checking it, and don't let other players glance at your screen.</p>`;
+    }
+    return `<p class="mode-note">Playing remotely: feel free to run a voice/video call alongside the app for any role that's allowed to talk freely. The Mute Clue Reader and Deaf Interpreter constraints are still enforced by the app either way.</p>`;
   }
 
   function allRolesFilled(view) {
@@ -379,9 +405,12 @@
         <span aria-hidden="true">#${w.position + 1}</span>
       </div>
     `).join('');
-    return `
+    const panel = `
       <p><strong>Rule:</strong> ${view.ruleText}</p>
       <div class="wire-grid" role="group" aria-label="Full wire panel">${wires}</div>
+    `;
+    return `
+      ${renderGatedPanel(view, panel)}
       ${renderInstructForm(view)}
       ${renderLog(view)}
     `;
@@ -413,12 +442,26 @@
       </div>
     `).join('');
     const symbols = (view.symbolPalette || []).map((s) => `<button class="symbol-btn" data-symbol="${s}" ${view.status !== 'active' ? 'disabled' : ''}>${s}</button>`).join('');
-    return `
+    const panel = `
       <p><strong>Rule:</strong> ${view.ruleText}</p>
-      <p>You cannot type free text. Send symbols to encode the rule for your Interpreter.</p>
       <div class="wire-grid" role="group" aria-label="Full wire panel">${wires}</div>
+    `;
+    return `
+      <p>You cannot type free text. Send symbols to encode the rule for your Interpreter.</p>
+      ${renderGatedPanel(view, panel)}
       <div class="symbol-grid" role="group" aria-label="Symbol palette">${symbols}</div>
       ${renderLog(view)}
+    `;
+  }
+
+  function renderGatedPanel(view, innerHtml) {
+    if (view.playStyle !== 'local') return innerHtml;
+    const revealed = state.revealed;
+    return `
+      <div class="reveal-gate ${revealed ? 'revealed' : ''}" id="reveal-gate">
+        <button type="button" class="reveal-btn" id="reveal-btn" aria-pressed="${revealed}">${revealed ? 'Hide Panel (currently visible)' : 'Show Panel (currently hidden)'}</button>
+        <div class="gated-content" id="gated-content" aria-hidden="${!revealed}">${innerHtml}</div>
+      </div>
     `;
   }
 
@@ -484,6 +527,13 @@
   }
 
   function wireGameScreen(view) {
+    const revealBtn = document.getElementById('reveal-btn');
+    if (revealBtn) {
+      revealBtn.addEventListener('click', () => {
+        state.revealed = !state.revealed;
+        render();
+      });
+    }
     root.querySelectorAll('.wire-btn[data-wire]').forEach((btn) => {
       btn.addEventListener('click', async () => {
         try {
@@ -507,6 +557,7 @@
     const resetBtn = document.getElementById('reset-btn');
     if (resetBtn) {
       resetBtn.addEventListener('click', async () => {
+        state.revealed = false;
         await api('/api/room/reset', { roomId: state.roomId, playerId: state.playerId });
       });
     }

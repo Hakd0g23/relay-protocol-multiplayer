@@ -159,9 +159,10 @@ function generatePuzzle(round = 1) {
 // ---- Room model -------------------------------------------------------
 
 class Room {
-  constructor(id, mode) {
+  constructor(id, mode, playStyle) {
     this.id = id;
     this.mode = mode; // 2 or 3
+    this.playStyle = playStyle === 'local' ? 'local' : 'online'; // 'local' = players together in person
     this.players = new Map(); // playerId -> {id, name, role, connected}
     this.status = 'lobby'; // lobby | active | won | lost
     this.puzzle = null;
@@ -198,10 +199,10 @@ class Room {
   }
 }
 
-function getOrCreateRoom(id, mode) {
+function getOrCreateRoom(id, mode, playStyle) {
   let room = rooms.get(id);
   if (!room) {
-    room = new Room(id, mode || 2);
+    room = new Room(id, mode || 2, playStyle);
     rooms.set(id, room);
   }
   return room;
@@ -226,6 +227,7 @@ function buildView(room, playerId) {
   const base = {
     roomId: room.id,
     mode: room.mode,
+    playStyle: room.playStyle,
     status: room.status,
     players: publicPlayers(room),
     availableRoles: room.availableRoles(),
@@ -337,8 +339,9 @@ const routes = {
     const requestedRoomId = (body.roomId || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8);
     const roomId = requestedRoomId || newId(3).toUpperCase();
     const mode = body.mode === 3 ? 3 : 2;
+    const playStyle = body.playStyle === 'local' ? 'local' : 'online';
     const name = (body.name || 'Player').replace(/[<>]/g, '').slice(0, 24) || 'Player';
-    const room = getOrCreateRoom(roomId, mode);
+    const room = getOrCreateRoom(roomId, mode, playStyle);
     if (room.players.size >= room.mode && ![...room.players.values()].some(p => p.name === name)) {
       // allow rejoin by same connection later via playerId; block brand-new joins once full
     }
@@ -347,7 +350,7 @@ const routes = {
     }
     const playerId = newId(6);
     room.players.set(playerId, { id: playerId, name, role: null, connected: false });
-    sendJson(res, 200, { roomId: room.id, playerId, mode: room.mode });
+    sendJson(res, 200, { roomId: room.id, playerId, mode: room.mode, playStyle: room.playStyle });
   },
 
   async 'POST /api/room/role'(req, res) {
