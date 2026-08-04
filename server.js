@@ -215,12 +215,37 @@ function gridSizeForRound(round) {
 }
 
 function gridVariantPoolForRound(round) {
-  const pool = ['row', 'column', 'color_group', 'shape_pair'];
+  const pool = ['row', 'column', 'color_group', 'shape_pair', 'manual_lookup'];
   if (round >= 3) pool.push('diagonal');
   return pool;
 }
 
-function generateHandshakeModule(round = 1) {
+// Same idea as the wire-cut manual lookup: resolve to a row or column via a
+// raw decision tree the Specialist evaluates themselves, not a stated answer.
+function resolveGridManualLookup(nodes, size, bombKey) {
+  const mDigit = bombKey.match(/\d(?!.*\d)/);
+  const lastDigit = mDigit ? parseInt(mDigit[0], 10) : 0;
+  const odd = lastDigit % 2 === 1;
+  const purpleCount = nodes.filter((n) => n.color === 'purple').length;
+  const starNodes = nodes.filter((n) => n.shape === 'star');
+
+  const steps = [
+    '1. If there is NO purple node, press ROW 1.',
+    '2. Else if there are two or more star-shaped nodes, press the COLUMN containing the FIRST star node (reading row by row).',
+    "3. Else if the bomb key's last digit is ODD, press the LAST row.",
+    '4. Otherwise, press the FIRST column.',
+  ];
+
+  let group;
+  if (purpleCount === 0) group = nodes.filter((n) => n.row === 0);
+  else if (starNodes.length >= 2) group = nodes.filter((n) => n.col === starNodes[0].col);
+  else if (odd) group = nodes.filter((n) => n.row === size - 1);
+  else group = nodes.filter((n) => n.col === 0);
+
+  return { group: group.map((n) => n.id), steps };
+}
+
+function generateHandshakeModule(round = 1, bombKey = 'AAAAAA') {
   const size = gridSizeForRound(round);
   const variant = pick(gridVariantPoolForRound(round));
   const total = size * size;
@@ -245,6 +270,15 @@ function generateHandshakeModule(round = 1) {
 
   const base = { moduleType: 'handshake_grid', variant, size, nodes };
 
+  if (variant === 'manual_lookup') {
+    const { group, steps } = resolveGridManualLookup(nodes, size, bombKey);
+    return {
+      ...base,
+      ruleText: `MANUAL LOOKUP — bomb key ${bombKey}. Work out the target row/column yourself from this decision tree, checked in order (first match wins):\n${steps.join(' ')}`,
+      requiredNodes: group,
+      exactSet: true,
+    };
+  }
   if (variant === 'row') {
     const targetRow = Math.floor(Math.random() * size);
     const group = nodes.filter((n) => n.row === targetRow).map((n) => n.id);
@@ -279,23 +313,48 @@ function bandWidthForRound(round) {
   return Math.max(20 - (round - 1) * 2, 8);
 }
 
-function generateFrequencyModule(round = 1) {
+// KTANE's Frequencies module structure: decode a condition, look up the
+// matching table row, get the exact answer. The table itself is safe to
+// print in full — knowing all four zones doesn't tell you which applies.
+const FREQ_ZONES = { A: 15, B: 40, C: 60, D: 85 }; // zone center points
+
+function resolveFrequencyZone(channelLabel, bombKey) {
+  const hasRepeatLetter = /([A-Z]).*\1/.test(bombKey);
+  const digitCount = (bombKey.match(/\d/g) || []).length;
+  const odd = channelLabel % 2 === 1;
+
+  const steps = [
+    '1. If the bomb key contains a REPEATED letter, use ZONE A.',
+    '2. Else if the bomb key contains 3 or more digits, use ZONE D.',
+    '3. Else if the channel key is ODD, use ZONE B.',
+    '4. Otherwise, use ZONE C.',
+  ];
+
+  let zone;
+  if (hasRepeatLetter) zone = 'A';
+  else if (digitCount >= 3) zone = 'D';
+  else if (odd) zone = 'B';
+  else zone = 'C';
+
+  return { zone, steps };
+}
+
+function generateFrequencyModule(round = 1, bombKey = 'AAAAAA') {
   const channelLabel = 1 + Math.floor(Math.random() * 9);
   const width = bandWidthForRound(round);
-  const odd = channelLabel % 2 === 1;
-  // Manual-style conditional, in the spirit of KTANE's serial-digit branches:
-  // the key's parity decides which half of the dial the band lives in.
-  const targetLow = odd
-    ? Math.floor(Math.random() * (50 - width))
-    : 50 + Math.floor(Math.random() * (50 - width));
+  const { zone, steps } = resolveFrequencyZone(channelLabel, bombKey);
+  const center = FREQ_ZONES[zone];
+  const targetLow = Math.max(0, Math.min(100 - width, center - width / 2));
   const targetHigh = targetLow + width;
+
+  const table = Object.entries(FREQ_ZONES).map(([z, c]) => `ZONE ${z}: center ${c}`).join(', ');
   return {
     moduleType: 'frequency_lock',
     channelLabel,
     targetLow,
     targetHigh,
     dialValue: Math.floor(Math.random() * 100),
-    ruleText: `Channel key reads ${channelLabel} (${odd ? 'ODD' : 'EVEN'}) — ${odd ? 'odd keys aim LOW' : 'even keys aim HIGH'}. Tune the dial so the needle rests between ${targetLow} and ${targetHigh}, then lock it in.`,
+    ruleText: `MANUAL LOOKUP — channel key ${channelLabel}, bomb key ${bombKey}. Reference table: ${table}. Determine the zone yourself, checked in order (first match wins):\n${steps.join(' ')}\nTune the dial to that zone's center ± ${Math.round(width / 2)}, then lock it in.`,
   };
 }
 
@@ -303,8 +362,8 @@ const FACES = ['front', 'back', 'right', 'left', 'top', 'bottom'];
 const MODULE_COUNT = 2;
 
 function generateOneModule(moduleType, round, bombKey) {
-  if (moduleType === 'handshake_grid') return generateHandshakeModule(round);
-  if (moduleType === 'frequency_lock') return generateFrequencyModule(round);
+  if (moduleType === 'handshake_grid') return generateHandshakeModule(round, bombKey);
+  if (moduleType === 'frequency_lock') return generateFrequencyModule(round, bombKey);
   return generateWireCutModule(round, bombKey);
 }
 
