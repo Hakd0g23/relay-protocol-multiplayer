@@ -499,12 +499,33 @@
   function render() {
     const view = state.view;
     if (!view) return;
+
+    // Re-renders happen on every SSE push, including the once-a-second timer
+    // tick — without this, rebuilding the DOM mid-keystroke drops focus and
+    // resets the cursor in whatever text input the player is typing into.
+    const active = document.activeElement;
+    const activeId = active && root.contains(active) ? active.id : null;
+    const activeValue = activeId ? active.value : null;
+    const selStart = activeId && typeof active.selectionStart === 'number' ? active.selectionStart : null;
+    const selEnd = activeId && typeof active.selectionEnd === 'number' ? active.selectionEnd : null;
+
     if (!view.yourRole || view.status === 'lobby') {
       root.innerHTML = renderRolePicker(view) + `<p id="conn-flag" class="conn-flag" hidden>Reconnecting...</p>`;
       wireRolePicker(view);
     } else {
       root.innerHTML = renderGameScreen(view) + `<p id="conn-flag" class="conn-flag" hidden>Reconnecting...</p>`;
       wireGameScreen(view);
+    }
+
+    if (activeId) {
+      const el = document.getElementById(activeId);
+      if (el && 'value' in el) {
+        el.value = activeValue;
+        el.focus();
+        if (selStart !== null) {
+          try { el.setSelectionRange(selStart, selEnd); } catch (e) { /* not a text-selectable input type */ }
+        }
+      }
     }
   }
 
