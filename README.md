@@ -20,9 +20,11 @@ Each round mounts 2 modules on 2 random distinct faces of the same cube, picked 
 
 - **Wire Cut** — a row of 5-8 wires; cut the set/order described by the rule (exact order, color grouping, color exclusion, position parity, shape pairing, or a KTANE-style **manual lookup**: a raw conditional decision tree plus a shared "bomb key" the Specialist has to evaluate themselves against the panel, not a resolved answer).
 - **Handshake Grid** — a 3x3 or 4x4 grid of nodes; press the set described by the rule (a row, column, diagonal, color group, or matching shape pair).
-- **Frequency Lock** — a rotary dial with a visible channel key; tune the needle into the target band (the key's parity decides which half of the dial to aim for) and lock it in.
+- **Frequency Lock** — a rotary dial printed with fixed zone letters (A/B/C/D); the Specialist works out which zone applies from the bomb key and relays the letter, and the Operator has to find it on their own dial face.
 - **Signal Decode** — a flashed sequence of colored signals the Operator watches (no manual); press the translated-color button for each one in order, using whichever of two printed lookup tables the bomb key selects.
 - **Password Lock** — a row of letter reels; spin each to spell the correct password, chosen from a printed candidate list via a decision tree keyed off the bomb key.
+- **Maze** — the Operator sees only their own position and the goal marker; the Specialist holds the only map of the walls between them and has to call out one direction at a time.
+- **Morse Relay** — a flashed dot/dash sequence the Operator watches; the Specialist decodes each group with the standard (public) Morse alphabet and calls out the letter to press on the keypad.
 
 Both modules must be solved to win. The Operator gets a single rotatable 3D cube with both modules mounted on their assigned faces, in full color — they have to rotate to find the second one, like a real multi-module bomb. A real accessible control (hidden button, or a visible slider for the dial) always exists per module alongside the 3D view, so the game is fully playable by keyboard/screen reader too.
 

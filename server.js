@@ -443,15 +443,114 @@ function generatePasswordModule(round = 1, bombKey = 'AAAAAA') {
   };
 }
 
+// ---- Maze: a hidden wall map the Operator has to be walked through --------
+// Real KTANE Maze structure: the defuser sees their own marker and the goal
+// marker (both physically on the panel) but nothing about the walls between
+// them. The Specialist holds the full wall layout — the only secret — and
+// has to give one direction at a time.
+
+function mazeSizeForRound(round) {
+  return round >= 3 ? 6 : 5;
+}
+
+function randInt(n) {
+  return Math.floor(Math.random() * n);
+}
+
+function generateMazeGrid(size) {
+  const cells = Array.from({ length: size }, () => Array.from({ length: size }, () => ({ N: false, E: false, S: false, W: false })));
+  const visited = Array.from({ length: size }, () => Array(size).fill(false));
+  const DIRS = [['N', -1, 0, 'S'], ['S', 1, 0, 'N'], ['E', 0, 1, 'W'], ['W', 0, -1, 'E']];
+
+  function carve(r, c) {
+    visited[r][c] = true;
+    for (const [dir, dr, dc, opp] of shuffle(DIRS)) {
+      const nr = r + dr, nc = c + dc;
+      if (nr >= 0 && nr < size && nc >= 0 && nc < size && !visited[nr][nc]) {
+        cells[r][c][dir] = true;
+        cells[nr][nc][opp] = true;
+        carve(nr, nc);
+      }
+    }
+  }
+  carve(0, 0);
+  return cells;
+}
+
+function describeMazeWalls(grid, size) {
+  const lines = [];
+  for (let r = 0; r < size; r++) {
+    for (let c = 0; c < size; c++) {
+      const open = grid[r][c];
+      const dirs = ['N', 'E', 'S', 'W'].filter((d) => open[d]);
+      lines.push(`(${r},${c}): ${dirs.length ? dirs.join('/') : 'none'}`);
+    }
+  }
+  return lines.join('; ');
+}
+
+function pickMazeGoal(size) {
+  let goal;
+  do {
+    goal = { row: randInt(size), col: randInt(size) };
+  } while (goal.row === 0 && goal.col === 0);
+  return goal;
+}
+
+function generateMazeModule(round = 1) {
+  const size = mazeSizeForRound(round);
+  const grid = generateMazeGrid(size);
+  const goal = pickMazeGoal(size);
+  return {
+    moduleType: 'maze',
+    size,
+    grid,
+    pos: { row: 0, col: 0 },
+    goal,
+    ruleText: `You hold the only map of this maze. Guide the Operator one step at a time (N/E/S/W) from their current position to the goal — walking into a wall counts as a wrong move. Walls (open directions per cell):\n${describeMazeWalls(grid, size)}`,
+  };
+}
+
+// ---- Morse Relay: a flashed dot/dash pattern decoded via the standard ----
+// Morse alphabet (public, unchanging reference) into letters to press.
+
+const MORSE_MAP = {
+  A: '.-', B: '-...', C: '-.-.', D: '-..', E: '.', F: '..-.', G: '--.', H: '....',
+  I: '..', J: '.---', K: '-.-', L: '.-..', M: '--', N: '-.', O: '---', P: '.--.',
+  Q: '--.-', R: '.-.', S: '...', T: '-', U: '..-', V: '...-', W: '.--', X: '-..-',
+  Y: '-.--', Z: '--..',
+};
+const MORSE_WORDS = ['RELAY', 'SIGNAL', 'ALERT', 'BEACON', 'ORBIT', 'RADIO', 'ECHO', 'VAULT'];
+
+function morseWordLengthForRound(round) {
+  return round >= 3 ? MORSE_WORDS : MORSE_WORDS.filter((w) => w.length <= 5);
+}
+
+function generateMorseModule(round = 1) {
+  const word = pick(morseWordLengthForRound(round));
+  const letters = word.split('');
+  const signals = letters.map((l) => MORSE_MAP[l]);
+  const table = Object.entries(MORSE_MAP).map(([l, code]) => `${l}=${code}`).join(' ');
+  return {
+    moduleType: 'morse_relay',
+    letters,
+    signals,
+    progress: 0,
+    ruleText: `Standard Morse reference (public, same every round): ${table}. Decode each flashed group in order using this table, then have the Operator press that letter on the keypad.`,
+  };
+}
+
 const FACES = ['front', 'back', 'right', 'left', 'top', 'bottom'];
 const MODULE_COUNT = 2;
-const MODULE_TYPES = ['wire_cut', 'handshake_grid', 'frequency_lock', 'signal_decode', 'password_lock'];
+const MODULE_TYPES = ['wire_cut', 'handshake_grid', 'frequency_lock', 'signal_decode', 'password_lock', 'maze', 'morse_relay'];
 
 function generateOneModule(moduleType, round, bombKey) {
   if (moduleType === 'handshake_grid') return generateHandshakeModule(round, bombKey);
   if (moduleType === 'frequency_lock') return generateFrequencyModule(round, bombKey);
   if (moduleType === 'signal_decode') return generateSignalModule(round, bombKey);
   if (moduleType === 'password_lock') return generatePasswordModule(round, bombKey);
+  if (moduleType === 'maze') return generateMazeModule(round);
+  if (moduleType === 'morse_relay') return generateMorseModule(round);
   return generateWireCutModule(round, bombKey);
 }
 
@@ -490,6 +589,23 @@ function applyContainmentBreach(puzzle) {
     puzzle.targetLow = newLow;
     puzzle.targetHigh = newLow + width;
     puzzle.ruleText += ' CONTAINMENT BREACH: the target band has drifted — re-read the range.';
+    return;
+  }
+
+  if (puzzle.moduleType === 'maze') {
+    // The goal marker itself is public (the Operator can see it same as the
+    // Specialist) — what changes is the Specialist now has to replan a path
+    // through walls the Operator still can't see.
+    puzzle.goal = pickMazeGoal(puzzle.size);
+    puzzle.ruleText += ` CONTAINMENT BREACH: the goal marker has jumped to a new cell — replan the route from the Operator's current position.`;
+    return;
+  }
+
+  if (puzzle.moduleType === 'morse_relay') {
+    const extra = pick(Object.keys(MORSE_MAP));
+    puzzle.letters.push(extra);
+    puzzle.signals.push(MORSE_MAP[extra]);
+    puzzle.ruleText += ' CONTAINMENT BREACH: one more letter has been flashed — extend the word you relay.';
     return;
   }
 
@@ -687,6 +803,14 @@ function buildModuleView(m, { showRule }) {
       out.password.candidates = m.candidates;
       out.ruleText = m.ruleText;
     }
+  } else if (m.moduleType === 'maze') {
+    // Position and goal are both physically visible markers in real KTANE —
+    // only the wall layout between them is the manual's secret.
+    out.maze = { size: m.size, pos: m.pos, goal: m.goal };
+    if (showRule) out.ruleText = m.ruleText;
+  } else if (m.moduleType === 'morse_relay') {
+    out.morse = { signals: m.signals, progress: m.progress };
+    if (showRule) out.ruleText = m.ruleText;
   }
   return out;
 }
@@ -1014,6 +1138,68 @@ const routes = {
     const correct = spelled === mod.targetWord;
     if (correct) {
       checkModuleSolved(room, mod);
+    } else {
+      applyWrongAction(room);
+    }
+    broadcast(room);
+    sendJson(res, 200, { ok: true, correct });
+  },
+
+  async 'POST /api/room/move'(req, res) {
+    const body = await readBody(req);
+    const room = rooms.get(body.roomId);
+    if (!room) return sendJson(res, 404, { error: 'Room not found.' });
+    const player = requirePlayer(room, body.playerId);
+    if (!player || player.role !== 'operator') {
+      return sendJson(res, 403, { error: 'Only the Blind Bomb Operator can move through the maze.' });
+    }
+    const mod = findActiveModule(room, body.face, 'maze');
+    if (room.status !== 'active' || !mod) {
+      return sendJson(res, 400, { error: 'No active maze on that face.' });
+    }
+    room.checkTimeout();
+    if (room.status !== 'active') {
+      broadcast(room);
+      return sendJson(res, 200, { ok: true, status: room.status });
+    }
+    const dir = body.dir;
+    const DELTA = { N: [-1, 0], S: [1, 0], E: [0, 1], W: [0, -1] };
+    if (!DELTA[dir]) return sendJson(res, 400, { error: 'Invalid direction.' });
+
+    const open = mod.grid[mod.pos.row][mod.pos.col][dir];
+    if (open) {
+      const [dr, dc] = DELTA[dir];
+      mod.pos = { row: mod.pos.row + dr, col: mod.pos.col + dc };
+      if (mod.pos.row === mod.goal.row && mod.pos.col === mod.goal.col) checkModuleSolved(room, mod);
+    } else {
+      applyWrongAction(room);
+    }
+    broadcast(room);
+    sendJson(res, 200, { ok: true, correct: open });
+  },
+
+  async 'POST /api/room/morse'(req, res) {
+    const body = await readBody(req);
+    const room = rooms.get(body.roomId);
+    if (!room) return sendJson(res, 404, { error: 'Room not found.' });
+    const player = requirePlayer(room, body.playerId);
+    if (!player || player.role !== 'operator') {
+      return sendJson(res, 403, { error: 'Only the Blind Bomb Operator can press keypad letters.' });
+    }
+    const mod = findActiveModule(room, body.face, 'morse_relay');
+    if (room.status !== 'active' || !mod) {
+      return sendJson(res, 400, { error: 'No active Morse relay on that face.' });
+    }
+    room.checkTimeout();
+    if (room.status !== 'active') {
+      broadcast(room);
+      return sendJson(res, 200, { ok: true, status: room.status });
+    }
+    const letter = (body.letter || '').toUpperCase();
+    const correct = mod.letters[mod.progress] === letter;
+    if (correct) {
+      mod.progress += 1;
+      if (mod.progress >= mod.letters.length) checkModuleSolved(room, mod);
     } else {
       applyWrongAction(room);
     }

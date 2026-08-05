@@ -165,6 +165,8 @@
   .reel-btn { padding: 0.3rem 0.6rem; min-height: 36px; }
   .reel-letter { font-family: var(--font-mono); font-size: 1.6rem; font-weight: 800; }
   .submit-password-btn { width: 100%; margin-top: 0.6rem; }
+  .maze-pad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.4rem; max-width: 220px; margin: 0.6rem auto; }
+  .maze-btn { min-height: 48px; }
   .log { font-family: var(--font-mono); max-height: 140px; overflow-y: auto; font-size: 0.85rem; border-top: 1px solid var(--border); padding-top: 0.5rem; }
   .log div { padding: 0.15rem 0; color: var(--muted); }
   .banner { padding: 0.75rem; border-radius: 8px; margin-bottom: 1rem; font-weight: 600; text-align: center; }
@@ -472,12 +474,30 @@
         </div>
       `;
     }
+    if (mod.moduleType === 'maze' && mod.maze) {
+      const mz = mod.maze;
+      return `
+        <div class="freq-readout">
+          <p>Operator position: <strong>(${mz.pos.row}, ${mz.pos.col})</strong> &mdash; Goal: <strong>(${mz.goal.row}, ${mz.goal.col})</strong></p>
+        </div>
+      `;
+    }
+    if (mod.moduleType === 'morse_relay' && mod.morse) {
+      const ms = mod.morse;
+      return `
+        <div class="freq-readout">
+          <p>Flashed groups: <strong>${ms.signals.join('  /  ')}</strong></p>
+          <p>Progress: <strong>${ms.progress}/${ms.signals.length}</strong></p>
+        </div>
+      `;
+    }
     return '';
   }
 
   const MODULE_NAMES = {
     wire_cut: 'Wire Cut', handshake_grid: 'Handshake Grid', frequency_lock: 'Frequency Lock',
     signal_decode: 'Signal Decode', password_lock: 'Password Lock',
+    maze: 'Maze', morse_relay: 'Morse Relay',
   };
 
   function moduleHeading(mod) {
@@ -591,6 +611,32 @@
       return `
         <div class="row" role="group" aria-label="Password reels">${reels}</div>
         <button class="submit-password-btn" data-face="${mod.face}" type="button" ${!active ? 'disabled' : ''}>Submit Password</button>
+      `;
+    }
+    if (mod.moduleType === 'maze' && mod.maze) {
+      const mz = mod.maze;
+      return `
+        <p>Your position: <strong>(${mz.pos.row}, ${mz.pos.col})</strong> &mdash; Goal marker: <strong>(${mz.goal.row}, ${mz.goal.col})</strong></p>
+        <div class="maze-pad" role="group" aria-label="Maze movement">
+          <span></span>
+          <button class="maze-btn" data-dir="N" data-face="${mod.face}" ${!active ? 'disabled' : ''} aria-label="Move north">&#9650;</button>
+          <span></span>
+          <button class="maze-btn" data-dir="W" data-face="${mod.face}" ${!active ? 'disabled' : ''} aria-label="Move west">&#9664;</button>
+          <span></span>
+          <button class="maze-btn" data-dir="E" data-face="${mod.face}" ${!active ? 'disabled' : ''} aria-label="Move east">&#9654;</button>
+          <span></span>
+          <button class="maze-btn" data-dir="S" data-face="${mod.face}" ${!active ? 'disabled' : ''} aria-label="Move south">&#9660;</button>
+          <span></span>
+        </div>
+      `;
+    }
+    if (mod.moduleType === 'morse_relay' && mod.morse) {
+      const ms = mod.morse;
+      return `
+        <p>Flashed groups: <strong>${ms.signals.join('  /  ')}</strong> &mdash; progress ${ms.progress}/${ms.signals.length}</p>
+        <div class="symbol-grid" role="group" aria-label="Letter keypad">
+          ${ALPHABET.split('').map((l) => `<button class="symbol-btn morse-btn" data-letter="${l}" data-face="${mod.face}" ${!active ? 'disabled' : ''} aria-label="Press letter ${l}">${l}</button>`).join('')}
+        </div>
       `;
     }
     return '';
@@ -799,6 +845,20 @@
       btn.addEventListener('click', async () => {
         try {
           await api('/api/room/submit-password', { roomId: state.roomId, playerId: state.playerId, face: btn.dataset.face });
+        } catch (e) { /* transient errors surface via next state push */ }
+      });
+    });
+    root.querySelectorAll('.maze-btn').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        try {
+          await api('/api/room/move', { roomId: state.roomId, playerId: state.playerId, dir: btn.dataset.dir, face: btn.dataset.face });
+        } catch (e) { /* transient errors surface via next state push */ }
+      });
+    });
+    root.querySelectorAll('.morse-btn').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        try {
+          await api('/api/room/morse', { roomId: state.roomId, playerId: state.playerId, letter: btn.dataset.letter, face: btn.dataset.face });
         } catch (e) { /* transient errors surface via next state push */ }
       });
     });
@@ -1300,6 +1360,12 @@ function clearMount(mount) {
   mount.dial = null;
   mount.signalIndex = {};
   mount.reelIndex = {};
+  mount.mazeTiles = null;
+  mount.mazeToken = null;
+  mount.mazeGoal = null;
+  mount.mazeSize = null;
+  mount.morsePlate = null;
+  mount.morseProgressPlate = null;
   mount.moduleType = null;
   mount.signature = '';
 }
@@ -1386,12 +1452,79 @@ function updatePasswordPlate(mount, i, letterIndex) {
 
 const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
 
+// --- Maze: an even floor grid the Operator can see, with a token at their
+// current position and a marker at the goal — walls stay invisible here,
+// same as the real panel; movement itself happens via the 2D arrow pad.
+function buildMazeInMount(mount, maze) {
+  const size = maze.size;
+  const spacing = 1.2 / size;
+  const tileGeo = new THREE.PlaneGeometry(spacing * 0.85, spacing * 0.85);
+  const tileMat = new THREE.MeshStandardMaterial({ color: 0xeef2ff, roughness: 0.8 });
+  const tiles = [];
+  for (let r = 0; r < size; r++) {
+    for (let c = 0; c < size; c++) {
+      const tile = new THREE.Mesh(tileGeo, tileMat);
+      tile.position.set(-0.6 + spacing * (c + 0.5), 0.6 - spacing * (r + 0.5), 0.01);
+      mount.group.add(tile);
+      tiles.push(tile);
+    }
+  }
+  const tokenMat = new THREE.MeshStandardMaterial({ color: 0x4ea8ff, roughness: 0.4, metalness: 0.2, emissive: 0x0d3a66 });
+  const token = new THREE.Mesh(new THREE.SphereGeometry(spacing * 0.28, 16, 16), tokenMat);
+  token.position.z = 0.05;
+  mount.group.add(token);
+  const goalMat = new THREE.MeshStandardMaterial({ color: 0x35c26a, roughness: 0.4, metalness: 0.2, emissive: 0x0d5c2a });
+  const goal = new THREE.Mesh(new THREE.TorusGeometry(spacing * 0.32, spacing * 0.06, 8, 20), goalMat);
+  goal.position.z = 0.04;
+  mount.group.add(goal);
+  mount.mazeTiles = tiles;
+  mount.mazeToken = token;
+  mount.mazeGoal = goal;
+  mount.mazeSize = size;
+  positionMazeMarkers(mount, maze);
+}
+
+function positionMazeMarkers(mount, maze) {
+  const size = mount.mazeSize;
+  const spacing = 1.2 / size;
+  mount.mazeToken.position.set(-0.6 + spacing * (maze.pos.col + 0.5), 0.6 - spacing * (maze.pos.row + 0.5), 0.05);
+  mount.mazeGoal.position.set(-0.6 + spacing * (maze.goal.col + 0.5), 0.6 - spacing * (maze.goal.row + 0.5), 0.04);
+}
+
+// --- Morse relay: a single plate showing the raw flashed groups and how
+// far the Operator has relayed — the 26-letter keypad lives in the 2D pad.
+function buildMorseInMount(mount, morse) {
+  const plate = buildDigitPlate(morse.signals.join(' '));
+  plate.scale.set(1.6, 0.5, 1);
+  plate.position.set(0, 0.25, 0.03);
+  mount.group.add(plate);
+  const progressPlate = buildDigitPlate(`${morse.progress}/${morse.signals.length}`);
+  progressPlate.scale.set(0.6, 0.6, 1);
+  progressPlate.position.set(0, -0.4, 0.03);
+  mount.group.add(progressPlate);
+  mount.morsePlate = plate;
+  mount.morseProgressPlate = progressPlate;
+}
+
+function updateMorseProgress(mount, morse) {
+  if (!mount.morseProgressPlate) return;
+  const x = mount.morseProgressPlate.position.x, y = mount.morseProgressPlate.position.y, z = mount.morseProgressPlate.position.z;
+  mount.group.remove(mount.morseProgressPlate);
+  const plate = buildDigitPlate(`${morse.progress}/${morse.signals.length}`);
+  plate.scale.set(0.6, 0.6, 1);
+  plate.position.set(x, y, z);
+  mount.group.add(plate);
+  mount.morseProgressPlate = plate;
+}
+
 function moduleSignature(mod) {
   if (mod.moduleType === 'wire_cut') return 'wire_cut:' + (mod.wires || []).map((w) => w.id).join(',');
   if (mod.moduleType === 'handshake_grid' && mod.grid) return 'handshake_grid:' + mod.grid.nodes.map((n) => n.id).join(',');
   if (mod.moduleType === 'frequency_lock' && mod.freq) return 'frequency_lock:' + mod.freq.channelLabel;
   if (mod.moduleType === 'signal_decode' && mod.signal) return 'signal_decode:' + mod.signal.buttonColors.join(',') + ':' + mod.signal.signals.length;
   if (mod.moduleType === 'password_lock' && mod.password) return 'password_lock:' + mod.password.reels.length;
+  if (mod.moduleType === 'maze' && mod.maze) return 'maze:' + mod.maze.size;
+  if (mod.moduleType === 'morse_relay' && mod.morse) return 'morse_relay:' + mod.morse.signals.length;
   return mod.moduleType || '';
 }
 
@@ -1425,6 +1558,8 @@ function sync(mountEl, view, actions) {
       else if (mod.moduleType === 'frequency_lock' && mod.freq) buildFrequencyInMount(mount, mod.freq);
       else if (mod.moduleType === 'signal_decode' && mod.signal) buildSignalInMount(mount, mod.signal);
       else if (mod.moduleType === 'password_lock' && mod.password) buildPasswordInMount(mount, mod.password);
+      else if (mod.moduleType === 'maze' && mod.maze) buildMazeInMount(mount, mod.maze);
+      else if (mod.moduleType === 'morse_relay' && mod.morse) buildMorseInMount(mount, mod.morse);
     } else if (mod.moduleType === 'wire_cut') {
       for (const w of mod.wires || []) {
         const entry = mount.wireIndex[w.id];
@@ -1445,6 +1580,10 @@ function sync(mountEl, view, actions) {
       mount.dial.needlePivot.rotation.z = valueToAngle(mod.freq.dialValue);
     } else if (mod.moduleType === 'password_lock' && mod.password) {
       mod.password.reels.forEach((r, i) => updatePasswordPlate(mount, i, r.letterIndex));
+    } else if (mod.moduleType === 'maze' && mod.maze && mount.mazeToken) {
+      positionMazeMarkers(mount, mod.maze);
+    } else if (mod.moduleType === 'morse_relay' && mod.morse) {
+      updateMorseProgress(mount, mod.morse);
     }
   }
 
