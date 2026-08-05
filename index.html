@@ -256,6 +256,8 @@
     es: null,
     reconnectDelay: 1000,
     revealed: false,
+    lastSignature: null,
+    domBuilt: false,
   };
 
   const root = document.getElementById('root');
@@ -734,13 +736,44 @@
 
   // ---- Render + event wiring -------------------------------------------
 
+  // The server broadcasts every second for the timer tick alone, even when
+  // nothing else changed. Rebuilding the whole DOM on every one of those —
+  // including a fresh .focus() call on a brand-new node — snapped the page
+  // back to whatever input was focused and disrupted typing/IME every
+  // second. Only rebuild when something other than the clock actually
+  // changed; otherwise just patch the timer/spread text in place.
+  function viewSignature(view) {
+    const { timeRemaining, serverTime, ...rest } = view;
+    return JSON.stringify(rest) + '|' + state.revealed;
+  }
+
+  function patchTimerOnly(view) {
+    const timerEl = root.querySelector('.timer');
+    if (timerEl) {
+      const low = view.timeRemaining <= 20;
+      const m = Math.floor(view.timeRemaining / 60);
+      const s = String(view.timeRemaining % 60).padStart(2, '0');
+      timerEl.textContent = `${m}:${s}`;
+      timerEl.classList.toggle('low', low);
+      timerEl.setAttribute('aria-label', `Time remaining ${view.timeRemaining} seconds`);
+    }
+  }
+
   function render() {
     const view = state.view;
     if (!view) return;
 
-    // Re-renders happen on every SSE push, including the once-a-second timer
-    // tick — without this, rebuilding the DOM mid-keystroke drops focus and
-    // resets the cursor in whatever text input the player is typing into.
+    const sig = viewSignature(view);
+    if (sig === state.lastSignature && state.domBuilt) {
+      patchTimerOnly(view);
+      return;
+    }
+    state.lastSignature = sig;
+    state.domBuilt = true;
+
+    // Full rebuild path below — preserve focus/value/selection across it
+    // for the rare case a structural change (module solved, new log entry,
+    // role taken) lands in the same tick as an in-progress keystroke.
     const active = document.activeElement;
     const activeId = active && root.contains(active) ? active.id : null;
     const activeValue = activeId ? active.value : null;

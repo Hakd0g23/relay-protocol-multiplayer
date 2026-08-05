@@ -489,18 +489,52 @@ function describeMazeWalls(grid, size) {
   return lines.join('; ');
 }
 
-function pickMazeGoal(size) {
-  let goal;
-  do {
-    goal = { row: randInt(size), col: randInt(size) };
-  } while (goal.row === 0 && goal.col === 0);
-  return goal;
+// A perfect maze (spanning tree) has exactly one path between any two
+// cells, and a random goal's distance from the start is unbounded — median
+// ~11 steps at size 5, worst case 24+. At real relay speed (one verbal
+// direction + confirmation per step) that alone can eat the whole round's
+// timer. Cap the goal to a bounded distance range so path length stays a
+// fair, predictable part of the round instead of an occasional timer-killer.
+const MAZE_MIN_PATH = 2;
+const MAZE_MAX_PATH = 10;
+
+function mazeDistances(grid, size, start) {
+  const DELTA = { N: [-1, 0], S: [1, 0], E: [0, 1], W: [0, -1] };
+  const dist = Array.from({ length: size }, () => Array(size).fill(-1));
+  dist[start.row][start.col] = 0;
+  const q = [[start.row, start.col]];
+  while (q.length) {
+    const [r, c] = q.shift();
+    for (const dir of ['N', 'E', 'S', 'W']) {
+      if (!grid[r][c][dir]) continue;
+      const [dr, dc] = DELTA[dir];
+      const nr = r + dr, nc = c + dc;
+      if (dist[nr][nc] === -1) {
+        dist[nr][nc] = dist[r][c] + 1;
+        q.push([nr, nc]);
+      }
+    }
+  }
+  return dist;
+}
+
+function pickMazeGoal(grid, size, from) {
+  const dist = mazeDistances(grid, size, from || { row: 0, col: 0 });
+  const candidates = [];
+  let farthest = from || { row: 0, col: 0 }, farthestDist = -1;
+  for (let r = 0; r < size; r++) {
+    for (let c = 0; c < size; c++) {
+      if (dist[r][c] >= MAZE_MIN_PATH && dist[r][c] <= MAZE_MAX_PATH) candidates.push({ row: r, col: c });
+      if (dist[r][c] > farthestDist) { farthestDist = dist[r][c]; farthest = { row: r, col: c }; }
+    }
+  }
+  return candidates.length ? pick(candidates) : farthest;
 }
 
 function generateMazeModule(round = 1) {
   const size = mazeSizeForRound(round);
   const grid = generateMazeGrid(size);
-  const goal = pickMazeGoal(size);
+  const goal = pickMazeGoal(grid, size);
   return {
     moduleType: 'maze',
     size,
@@ -596,7 +630,7 @@ function applyContainmentBreach(puzzle) {
     // The goal marker itself is public (the Operator can see it same as the
     // Specialist) — what changes is the Specialist now has to replan a path
     // through walls the Operator still can't see.
-    puzzle.goal = pickMazeGoal(puzzle.size);
+    puzzle.goal = pickMazeGoal(puzzle.grid, puzzle.size, puzzle.pos);
     puzzle.ruleText += ` CONTAINMENT BREACH: the goal marker has jumped to a new cell — replan the route from the Operator's current position.`;
     return;
   }
@@ -919,8 +953,15 @@ const routes = {
     }
     room.bombKey = generateBombKey();
     room.modules = generateModules(room.round, room.bombKey);
-    const lookupCount = room.modules.filter((m) => m.ruleText && m.ruleText.includes('MANUAL LOOKUP')).length;
-    room.timerDuration = timerForRound(room.round) + lookupCount * LOOKUP_TIME_BONUS;
+    // Same flat bonus for any module that takes real extra relay time to
+    // execute, not just the ones phrased as a decision-tree lookup: Maze
+    // needs turn-by-turn verbal guidance across several moves, and Morse
+    // Relay needs a table lookup PLUS hunting one letter at a time across a
+    // 26-key keypad — both as slow in practice as a manual-lookup wire cut.
+    const heavyModuleCount = room.modules.filter((m) =>
+      (m.ruleText && m.ruleText.includes('MANUAL LOOKUP')) || m.moduleType === 'maze' || m.moduleType === 'morse_relay'
+    ).length;
+    room.timerDuration = timerForRound(room.round) + heavyModuleCount * LOOKUP_TIME_BONUS;
     room.startedAt = Date.now();
     room.status = 'active';
     room.spread = 0;
