@@ -151,7 +151,8 @@
     background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 0.75rem; margin: 0.75rem 0;
   }
   .freq-readout p, .freq-controls label { margin: 0.2rem 0; }
-  .freq-controls input[type="range"] { width: 100%; margin: 0.4rem 0; }
+  .freq-controls input[type="range"] { width: 100%; margin: 0.4rem 0 0.1rem; }
+  .freq-zone-ticks { position: relative; height: 1.1rem; font-family: var(--font-mono); font-weight: 700; color: var(--muted); margin-bottom: 0.3rem; }
   .freq-controls output { display: inline-block; font-family: var(--font-mono); font-size: 1.1rem; margin-right: 0.6rem; }
   .wire-color-swatch { display: block; width: 22px; height: 22px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.4); }
   .symbol-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.5rem; }
@@ -211,6 +212,12 @@
   'use strict';
 
   const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+
+  // Fixed calibration printed on every dial face, same every game — public
+  // knowledge like the markings on a real instrument. What's secret is
+  // which letter applies this round (that's the manual), not where the
+  // letters sit on the dial.
+  const FREQ_ZONES = { A: 15, B: 40, C: 60, D: 85 };
 
   const SHAPE_SVGS = {
     circle: '<svg viewBox="0 0 40 40" class="wire-shape" aria-hidden="true"><circle cx="20" cy="20" r="15" fill="currentColor"/></svg>',
@@ -439,11 +446,11 @@
     }
     if (mod.moduleType === 'frequency_lock' && mod.freq) {
       const f = mod.freq;
-      const hasTarget = f.targetLow != null;
+      const hasZone = f.zone != null;
       return `
         <div class="freq-readout">
           <p>Channel key: <strong>${f.channelLabel}</strong></p>
-          ${hasTarget ? `<p>Target band: <strong>${f.targetLow}&ndash;${f.targetHigh}</strong></p>` : ''}
+          ${hasZone ? `<p>Target zone: <strong>ZONE ${f.zone}</strong> &mdash; tell the Operator to find it on their dial face.</p>` : ''}
           <p>Current dial reading: <strong>${f.dialValue}</strong></p>
         </div>
       `;
@@ -549,10 +556,12 @@
     }
     if (mod.moduleType === 'frequency_lock' && mod.freq) {
       const f = mod.freq;
+      const zoneTicks = Object.entries(FREQ_ZONES).map(([z, pos]) => `<span style="position:absolute;left:${pos}%;transform:translateX(-50%)">${z}</span>`).join('');
       return `
         <div class="freq-controls">
           <label for="dial-input-${mod.face}">Dial value &mdash; channel key ${f.channelLabel}</label>
           <input type="range" class="dial-input" id="dial-input-${mod.face}" data-face="${mod.face}" min="0" max="100" value="${f.dialValue}" ${!active ? 'disabled' : ''}>
+          <div class="freq-zone-ticks" aria-hidden="true">${zoneTicks}</div>
           <output for="dial-input-${mod.face}" class="dial-output" id="dial-output-${mod.face}">${f.dialValue}</output>
           <button class="lock-btn" data-face="${mod.face}" type="button" ${!active ? 'disabled' : ''}>Lock In</button>
         </div>
@@ -1099,6 +1108,10 @@ function angleToValue(angle) {
   return Math.round(((clamped / DIAL_SWEEP) + 1) / 2 * 100);
 }
 
+// Same fixed calibration as the 2D dial's tick marks — printed on the
+// instrument itself, not part of any single round's secret target.
+const FREQ_ZONES_3D = { A: 15, B: 40, C: 60, D: 85 };
+
 function buildDialScene(freq) {
   const discMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.6, metalness: 0.15 });
   // Rotate the geometry itself (not the mesh) so the mesh transform stays
@@ -1125,6 +1138,15 @@ function buildDialScene(freq) {
 
   const label = buildDigitPlate(freq.channelLabel);
   label.position.set(0, -0.72, 0);
+
+  for (const [zone, pos] of Object.entries(FREQ_ZONES_3D)) {
+    const angle = valueToAngle(pos);
+    const plate = buildDigitPlate(zone);
+    plate.scale.set(0.4, 0.4, 0.4);
+    const r = 0.62;
+    plate.position.set(Math.sin(angle) * r, Math.cos(angle) * r, 0.03);
+    disc.add(plate);
+  }
 
   return { disc, needlePivot, label };
 }

@@ -340,6 +340,13 @@ function resolveFrequencyZone(channelLabel, bombKey) {
   return { zone, steps };
 }
 
+// The dial face itself prints the four zone letters at their fixed
+// positions (same every game, visible to whoever's looking at the dial) —
+// that calibration is public. What's NOT public is which zone applies, and
+// the numeric target band is never handed to the Specialist directly: they
+// work out the ZONE from the bomb key and relay the LETTER, same as every
+// other module hands over a described target rather than a raw coordinate.
+// The Operator has to actually find that letter on their own dial.
 function generateFrequencyModule(round = 1, bombKey = 'AAAAAA') {
   const channelLabel = 1 + Math.floor(Math.random() * 9);
   const width = bandWidthForRound(round);
@@ -348,14 +355,14 @@ function generateFrequencyModule(round = 1, bombKey = 'AAAAAA') {
   const targetLow = Math.max(0, Math.min(100 - width, center - width / 2));
   const targetHigh = targetLow + width;
 
-  const table = Object.entries(FREQ_ZONES).map(([z, c]) => `ZONE ${z}: center ${c}`).join(', ');
   return {
     moduleType: 'frequency_lock',
     channelLabel,
+    zone,
     targetLow,
     targetHigh,
     dialValue: Math.floor(Math.random() * 100),
-    ruleText: `MANUAL LOOKUP — channel key ${channelLabel}, bomb key ${bombKey}. Reference table: ${table}. Determine the zone yourself, checked in order (first match wins):\n${steps.join(' ')}\nTune the dial to that zone's center ± ${Math.round(width / 2)}, then lock it in.`,
+    ruleText: `MANUAL LOOKUP — channel key ${channelLabel}, bomb key ${bombKey}. Determine the zone yourself, checked in order (first match wins):\n${steps.join(' ')}\nTell the Operator to line the needle up with that ZONE letter on the dial face, then lock it in.`,
   };
 }
 
@@ -659,10 +666,13 @@ function buildModuleView(m, { showRule }) {
     out.grid = { size: m.size, nodes: m.nodes.map((n) => ({ id: n.id, row: n.row, col: n.col, shape: n.shape, color: n.color, pressed: n.pressed })) };
     if (showRule) out.ruleText = m.ruleText;
   } else if (m.moduleType === 'frequency_lock') {
+    // The dial's physical zone-letter markings (FREQ_ZONES) are printed on
+    // the instrument itself and sent to every role via the client's own
+    // constant — never the raw numeric target band, which would just be
+    // the answer handed over outright.
     out.freq = { channelLabel: m.channelLabel, dialValue: m.dialValue };
     if (showRule) {
-      out.freq.targetLow = m.targetLow;
-      out.freq.targetHigh = m.targetHigh;
+      out.freq.zone = m.zone;
       out.ruleText = m.ruleText;
     }
   } else if (m.moduleType === 'signal_decode') {
