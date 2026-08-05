@@ -359,12 +359,92 @@ function generateFrequencyModule(round = 1, bombKey = 'AAAAAA') {
   };
 }
 
+// ---- Signal Decode: a flashed color sequence the Operator sees but can't
+// interpret, translated through a manual-held lookup table -----------------
+
+function signalLengthForRound(round) {
+  return Math.min(3 + Math.floor((round - 1) / 2), 6);
+}
+
+// KTANE's Simon Says structure: the sighted role never gets a resolved
+// mapping, just two full tables and the same repeated-letter test used
+// elsewhere — safe to print both tables since knowing them doesn't say
+// which one applies.
+function generateSignalModule(round = 1, bombKey = 'AAAAAA') {
+  const buttonColors = shuffle(COLORS).slice(0, 4);
+  const length = signalLengthForRound(round);
+  const signals = Array.from({ length }, () => pick(buttonColors));
+  const hasRepeatLetter = /([A-Z]).*\1/.test(bombKey);
+
+  const shuffledA = shuffle(buttonColors);
+  const shuffledB = shuffle(buttonColors);
+  const tableA = {}, tableB = {};
+  buttonColors.forEach((c, i) => { tableA[c] = shuffledA[i]; tableB[c] = shuffledB[i]; });
+  const table = hasRepeatLetter ? tableA : tableB;
+  const target = signals.map((c) => table[c]);
+
+  const fmtTable = (t) => buttonColors.map((c) => `${c.toUpperCase()} -> ${t[c].toUpperCase()}`).join(', ');
+  return {
+    moduleType: 'signal_decode',
+    buttonColors,
+    signals,
+    progress: 0,
+    target,
+    _table: table,
+    ruleText: `MANUAL LOOKUP — bomb key ${bombKey}. TABLE A (use if the bomb key has a REPEATED letter): ${fmtTable(tableA)}. TABLE B (otherwise): ${fmtTable(tableB)}. For each flashed color in order, press the button for its translated color from the correct table.`,
+  };
+}
+
+// ---- Password Lock: letter reels spelling a word picked from a printed --
+// candidate list via a decision tree, same manual-lookup shape as the rest.
+
+const PASSWORD_WORDS = ['RADIO', 'ROBOT', 'TRACE', 'PRIME', 'GHOST', 'QUARK', 'VALVE', 'ORBIT', 'CHART', 'PULSE'];
+const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+
+function resolvePasswordWord(candidates, bombKey) {
+  const hasRepeatLetter = /([A-Z]).*\1/.test(bombKey);
+  const digitCount = (bombKey.match(/\d/g) || []).length;
+  const vowelCount = (bombKey.match(/[AEIOU]/g) || []).length;
+
+  const steps = [
+    `1. If the bomb key has a REPEATED letter, the password is candidate #1 (${candidates[0]}).`,
+    `2. Else if the bomb key has 3 or more digits, the password is candidate #2 (${candidates[1]}).`,
+    `3. Else if the bomb key has 2 or more vowels, the password is candidate #3 (${candidates[2]}).`,
+    `4. Otherwise, the password is candidate #4 (${candidates[3]}).`,
+  ];
+
+  let word;
+  if (hasRepeatLetter) word = candidates[0];
+  else if (digitCount >= 3) word = candidates[1];
+  else if (vowelCount >= 2) word = candidates[2];
+  else word = candidates[3];
+
+  return { word, steps };
+}
+
+function generatePasswordModule(round = 1, bombKey = 'AAAAAA') {
+  const candidates = shuffle(PASSWORD_WORDS).slice(0, 4);
+  const { word, steps } = resolvePasswordWord(candidates, bombKey);
+  const reels = word.split('').map(() => ({ letterIndex: Math.floor(Math.random() * ALPHABET.length) }));
+
+  return {
+    moduleType: 'password_lock',
+    candidates,
+    reels,
+    targetWord: word,
+    ruleText: `MANUAL LOOKUP — bomb key ${bombKey}. Candidate passwords: ${candidates.join(', ')}. Determine which one is correct, checked in order (first match wins):\n${steps.join(' ')}\nSpin each reel to spell that word, then submit.`,
+  };
+}
+
 const FACES = ['front', 'back', 'right', 'left', 'top', 'bottom'];
 const MODULE_COUNT = 2;
+const MODULE_TYPES = ['wire_cut', 'handshake_grid', 'frequency_lock', 'signal_decode', 'password_lock'];
 
 function generateOneModule(moduleType, round, bombKey) {
   if (moduleType === 'handshake_grid') return generateHandshakeModule(round, bombKey);
   if (moduleType === 'frequency_lock') return generateFrequencyModule(round, bombKey);
+  if (moduleType === 'signal_decode') return generateSignalModule(round, bombKey);
+  if (moduleType === 'password_lock') return generatePasswordModule(round, bombKey);
   return generateWireCutModule(round, bombKey);
 }
 
@@ -378,7 +458,7 @@ function generateBombKey() {
 // Two modules per round, each on a distinct random face of the same cube —
 // the player has to rotate to find both, same as a real multi-module bomb.
 function generateModules(round = 1, bombKey = 'AAAAAA') {
-  const types = shuffle(['wire_cut', 'handshake_grid', 'frequency_lock']).slice(0, MODULE_COUNT);
+  const types = shuffle(MODULE_TYPES).slice(0, MODULE_COUNT);
   const faces = shuffle(FACES).slice(0, MODULE_COUNT);
   return types.map((moduleType, i) => {
     const mod = generateOneModule(moduleType, round, bombKey);
@@ -403,6 +483,26 @@ function applyContainmentBreach(puzzle) {
     puzzle.targetLow = newLow;
     puzzle.targetHigh = newLow + width;
     puzzle.ruleText += ' CONTAINMENT BREACH: the target band has drifted — re-read the range.';
+    return;
+  }
+
+  if (puzzle.moduleType === 'signal_decode') {
+    // The signal keeps talking: one more flash arrives, translated through
+    // the same table — sighted roles see it appended immediately, the
+    // operator only feels the sequence they're relaying got longer.
+    const extra = pick(puzzle.buttonColors);
+    puzzle.signals.push(extra);
+    puzzle.target.push(puzzle._table[extra]);
+    puzzle.ruleText += ' CONTAINMENT BREACH: one more signal has flashed — extend the sequence you relay.';
+    return;
+  }
+
+  if (puzzle.moduleType === 'password_lock') {
+    // The password drifts to a different entry on the same printed list —
+    // only sighted roles notice the manual now points elsewhere.
+    const alternatives = puzzle.candidates.filter((w) => w !== puzzle.targetWord);
+    puzzle.targetWord = pick(alternatives);
+    puzzle.ruleText += ` CONTAINMENT BREACH: the password has changed — it is now ${puzzle.targetWord}.`;
     return;
   }
 
@@ -563,6 +663,18 @@ function buildModuleView(m, { showRule }) {
     if (showRule) {
       out.freq.targetLow = m.targetLow;
       out.freq.targetHigh = m.targetHigh;
+      out.ruleText = m.ruleText;
+    }
+  } else if (m.moduleType === 'signal_decode') {
+    // The Operator sees the raw flashed sequence and how far they've gotten
+    // (same as watching real Simon Says flashes) but never the translation
+    // table — that's the manual, held only by the Specialist.
+    out.signal = { buttonColors: m.buttonColors, signals: m.signals, progress: m.progress };
+    if (showRule) out.ruleText = m.ruleText;
+  } else if (m.moduleType === 'password_lock') {
+    out.password = { reels: m.reels.map((r) => ({ letterIndex: r.letterIndex })) };
+    if (showRule) {
+      out.password.candidates = m.candidates;
       out.ruleText = m.ruleText;
     }
   }
@@ -806,6 +918,90 @@ const routes = {
       return sendJson(res, 200, { ok: true });
     }
     const correct = value >= mod.targetLow && value <= mod.targetHigh;
+    if (correct) {
+      checkModuleSolved(room, mod);
+    } else {
+      applyWrongAction(room);
+    }
+    broadcast(room);
+    sendJson(res, 200, { ok: true, correct });
+  },
+
+  async 'POST /api/room/signal'(req, res) {
+    const body = await readBody(req);
+    const room = rooms.get(body.roomId);
+    if (!room) return sendJson(res, 404, { error: 'Room not found.' });
+    const player = requirePlayer(room, body.playerId);
+    if (!player || player.role !== 'operator') {
+      return sendJson(res, 403, { error: 'Only the Blind Bomb Operator can press signal buttons.' });
+    }
+    const mod = findActiveModule(room, body.face, 'signal_decode');
+    if (room.status !== 'active' || !mod) {
+      return sendJson(res, 400, { error: 'No active signal decode module on that face.' });
+    }
+    room.checkTimeout();
+    if (room.status !== 'active') {
+      broadcast(room);
+      return sendJson(res, 200, { ok: true, status: room.status });
+    }
+    const color = body.color;
+    if (!mod.buttonColors.includes(color)) return sendJson(res, 400, { error: 'Invalid button.' });
+
+    const correct = mod.target[mod.progress] === color;
+    if (correct) {
+      mod.progress += 1;
+      if (mod.progress >= mod.signals.length) checkModuleSolved(room, mod);
+    } else {
+      applyWrongAction(room);
+    }
+    broadcast(room);
+    sendJson(res, 200, { ok: true, correct });
+  },
+
+  async 'POST /api/room/spin'(req, res) {
+    const body = await readBody(req);
+    const room = rooms.get(body.roomId);
+    if (!room) return sendJson(res, 404, { error: 'Room not found.' });
+    const player = requirePlayer(room, body.playerId);
+    if (!player || player.role !== 'operator') {
+      return sendJson(res, 403, { error: 'Only the Blind Bomb Operator can spin the reels.' });
+    }
+    const mod = findActiveModule(room, body.face, 'password_lock');
+    if (room.status !== 'active' || !mod) {
+      return sendJson(res, 400, { error: 'No active password lock on that face.' });
+    }
+    room.checkTimeout();
+    if (room.status !== 'active') {
+      broadcast(room);
+      return sendJson(res, 200, { ok: true, status: room.status });
+    }
+    const reel = mod.reels[body.reelIndex];
+    if (!reel) return sendJson(res, 400, { error: 'Invalid reel.' });
+    const delta = body.delta === -1 ? -1 : 1;
+    reel.letterIndex = (reel.letterIndex + delta + ALPHABET.length) % ALPHABET.length;
+    broadcast(room);
+    sendJson(res, 200, { ok: true });
+  },
+
+  async 'POST /api/room/submit-password'(req, res) {
+    const body = await readBody(req);
+    const room = rooms.get(body.roomId);
+    if (!room) return sendJson(res, 404, { error: 'Room not found.' });
+    const player = requirePlayer(room, body.playerId);
+    if (!player || player.role !== 'operator') {
+      return sendJson(res, 403, { error: 'Only the Blind Bomb Operator can submit the password.' });
+    }
+    const mod = findActiveModule(room, body.face, 'password_lock');
+    if (room.status !== 'active' || !mod) {
+      return sendJson(res, 400, { error: 'No active password lock on that face.' });
+    }
+    room.checkTimeout();
+    if (room.status !== 'active') {
+      broadcast(room);
+      return sendJson(res, 200, { ok: true, status: room.status });
+    }
+    const spelled = mod.reels.map((r) => ALPHABET[r.letterIndex]).join('');
+    const correct = spelled === mod.targetWord;
     if (correct) {
       checkModuleSolved(room, mod);
     } else {

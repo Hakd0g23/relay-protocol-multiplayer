@@ -156,6 +156,14 @@
   .wire-color-swatch { display: block; width: 22px; height: 22px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.4); }
   .symbol-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.5rem; }
   .symbol-btn { font-size: 1.5rem; padding: 0.6rem; }
+  .signal-btn { display: flex; align-items: center; gap: 0.4rem; }
+  .reel-control {
+    display: flex; flex-direction: column; align-items: center; gap: 0.3rem;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 0.5rem;
+  }
+  .reel-btn { padding: 0.3rem 0.6rem; min-height: 36px; }
+  .reel-letter { font-family: var(--font-mono); font-size: 1.6rem; font-weight: 800; }
+  .submit-password-btn { width: 100%; margin-top: 0.6rem; }
   .log { font-family: var(--font-mono); max-height: 140px; overflow-y: auto; font-size: 0.85rem; border-top: 1px solid var(--border); padding-top: 0.5rem; }
   .log div { padding: 0.15rem 0; color: var(--muted); }
   .banner { padding: 0.75rem; border-radius: 8px; margin-bottom: 1rem; font-weight: 600; text-align: center; }
@@ -201,6 +209,8 @@
 <script>
 (function () {
   'use strict';
+
+  const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
 
   const SHAPE_SVGS = {
     circle: '<svg viewBox="0 0 40 40" class="wire-shape" aria-hidden="true"><circle cx="20" cy="20" r="15" fill="currentColor"/></svg>',
@@ -438,10 +448,30 @@
         </div>
       `;
     }
+    if (mod.moduleType === 'signal_decode' && mod.signal) {
+      const s = mod.signal;
+      return `
+        <div class="freq-readout">
+          <p>Flashed sequence: <strong>${s.signals.map((c) => c.toUpperCase()).join(' -> ')}</strong></p>
+          <p>Progress: <strong>${s.progress}/${s.signals.length}</strong></p>
+        </div>
+      `;
+    }
+    if (mod.moduleType === 'password_lock' && mod.password) {
+      const p = mod.password;
+      return `
+        <div class="freq-readout">
+          <p>Current reels: <strong>${p.reels.map((r) => ALPHABET[r.letterIndex]).join('')}</strong></p>
+        </div>
+      `;
+    }
     return '';
   }
 
-  const MODULE_NAMES = { wire_cut: 'Wire Cut', handshake_grid: 'Handshake Grid', frequency_lock: 'Frequency Lock' };
+  const MODULE_NAMES = {
+    wire_cut: 'Wire Cut', handshake_grid: 'Handshake Grid', frequency_lock: 'Frequency Lock',
+    signal_decode: 'Signal Decode', password_lock: 'Password Lock',
+  };
 
   function moduleHeading(mod) {
     const face = FACE_LABELS[mod.face] || mod.face;
@@ -526,6 +556,32 @@
           <output for="dial-input-${mod.face}" class="dial-output" id="dial-output-${mod.face}">${f.dialValue}</output>
           <button class="lock-btn" data-face="${mod.face}" type="button" ${!active ? 'disabled' : ''}>Lock In</button>
         </div>
+      `;
+    }
+    if (mod.moduleType === 'signal_decode' && mod.signal) {
+      const s = mod.signal;
+      return `
+        <p>Flashed sequence: <strong>${s.signals.map((c) => c.toUpperCase()).join(' -> ')}</strong> &mdash; progress ${s.progress}/${s.signals.length}</p>
+        <div class="row" role="group" aria-label="Signal buttons">
+          ${s.buttonColors.map((c) => `
+            <button class="signal-btn" data-signal="${c}" data-face="${mod.face}" ${!active ? 'disabled' : ''} aria-label="Press ${c} button">
+              ${colorSwatch(c)} ${c.toUpperCase()}
+            </button>
+          `).join('')}
+        </div>
+      `;
+    }
+    if (mod.moduleType === 'password_lock' && mod.password) {
+      const reels = mod.password.reels.map((r, i) => `
+        <div class="reel-control">
+          <button class="reel-btn" data-reel="${i}" data-delta="1" data-face="${mod.face}" ${!active ? 'disabled' : ''} aria-label="Reel ${i + 1} next letter">&#9650;</button>
+          <span class="reel-letter" aria-live="polite">${ALPHABET[r.letterIndex]}</span>
+          <button class="reel-btn" data-reel="${i}" data-delta="-1" data-face="${mod.face}" ${!active ? 'disabled' : ''} aria-label="Reel ${i + 1} previous letter">&#9660;</button>
+        </div>
+      `).join('');
+      return `
+        <div class="row" role="group" aria-label="Password reels">${reels}</div>
+        <button class="submit-password-btn" data-face="${mod.face}" type="button" ${!active ? 'disabled' : ''}>Submit Password</button>
       `;
     }
     return '';
@@ -716,6 +772,27 @@
         } catch (e) { /* transient errors surface via next state push */ }
       });
     });
+    root.querySelectorAll('.signal-btn').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        try {
+          await api('/api/room/signal', { roomId: state.roomId, playerId: state.playerId, color: btn.dataset.signal, face: btn.dataset.face });
+        } catch (e) { /* transient errors surface via next state push */ }
+      });
+    });
+    root.querySelectorAll('.reel-btn').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        try {
+          await api('/api/room/spin', { roomId: state.roomId, playerId: state.playerId, reelIndex: Number(btn.dataset.reel), delta: Number(btn.dataset.delta), face: btn.dataset.face });
+        } catch (e) { /* transient errors surface via next state push */ }
+      });
+    });
+    root.querySelectorAll('.submit-password-btn').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        try {
+          await api('/api/room/submit-password', { roomId: state.roomId, playerId: state.playerId, face: btn.dataset.face });
+        } catch (e) { /* transient errors surface via next state push */ }
+      });
+    });
     const form = document.getElementById('instruct-form');
     if (form) {
       form.addEventListener('submit', async (evt) => {
@@ -734,6 +811,16 @@
     const bomb3dMount = document.getElementById('bomb3d-mount');
     if (bomb3dMount && window.RelayBomb3D) {
       window.RelayBomb3D.sync(bomb3dMount, view, {
+        onSignal: async (face, color) => {
+          try {
+            await api('/api/room/signal', { roomId: state.roomId, playerId: state.playerId, color, face });
+          } catch (e) { /* transient errors surface via next state push */ }
+        },
+        onSpin: async (face, reelIndex, delta) => {
+          try {
+            await api('/api/room/spin', { roomId: state.roomId, playerId: state.playerId, reelIndex, delta, face });
+          } catch (e) { /* transient errors surface via next state push */ }
+        },
         onCut: async (face, wireId) => {
           try {
             await api('/api/room/cut', { roomId: state.roomId, playerId: state.playerId, wireId, face });
@@ -1093,7 +1180,7 @@ function createContext() {
     casing.add(group);
     const plate = new THREE.Mesh(new THREE.PlaneGeometry(1.3, 1.3), new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.7 }));
     group.add(plate);
-    moduleMounts[face] = { group, plate, moduleType: null, wireIndex: {}, nodeIndex: {}, dial: null, signature: '' };
+    moduleMounts[face] = { group, plate, moduleType: null, wireIndex: {}, nodeIndex: {}, dial: null, signalIndex: {}, reelIndex: {}, signature: '' };
   }
 
   const crackFaces = Object.entries(FACE_CONFIG).map(([, cfg]) => makeCrackFace(casing, cfg.pos, cfg.rot));
@@ -1136,6 +1223,22 @@ function createContext() {
         const angle = Math.atan2(local.x, local.y);
         c.actions.onTune(face, angleToValue(angle), false);
         return;
+      } else if (mount.moduleType === 'signal_decode' && c.actions.onSignal) {
+        const targets = Object.values(mount.signalIndex).map((e) => e.base);
+        const hits = raycaster.intersectObjects(targets, false);
+        if (!hits.length) continue;
+        const found = Object.entries(mount.signalIndex).find(([, e]) => e.base === hits[0].object);
+        if (!found) continue;
+        c.actions.onSignal(face, found[0]);
+        return;
+      } else if (mount.moduleType === 'password_lock' && c.actions.onSpin) {
+        const targets = Object.values(mount.reelIndex).map((e) => e.plate);
+        const hits = raycaster.intersectObjects(targets, false);
+        if (!hits.length) continue;
+        const found = Object.entries(mount.reelIndex).find(([, e]) => e.plate === hits[0].object);
+        if (!found) continue;
+        c.actions.onSpin(face, Number(found[0]), 1);
+        return;
       }
     }
   });
@@ -1173,6 +1276,8 @@ function clearMount(mount) {
   mount.wireIndex = {};
   mount.nodeIndex = {};
   mount.dial = null;
+  mount.signalIndex = {};
+  mount.reelIndex = {};
   mount.moduleType = null;
   mount.signature = '';
 }
@@ -1220,10 +1325,51 @@ function buildFrequencyInMount(mount, freq) {
   mount.dial = dial;
 }
 
+// --- Signal decode: a row of clickable colored buttons -----------------
+function buildSignalInMount(mount, signal) {
+  const colors = signal.buttonColors;
+  const spacing = 1.2 / (colors.length + 1);
+  colors.forEach((c, i) => {
+    const x = -1.2 / 2 + spacing * (i + 1);
+    const { group, base, glyph } = buildNodeButton('circle', c);
+    group.position.set(x, 0, 0.03);
+    mount.group.add(group);
+    mount.signalIndex[c] = { group, base, glyph };
+  });
+}
+
+// --- Password lock: a row of letter-plate reels, click to advance -------
+function buildPasswordInMount(mount, password) {
+  const reels = password.reels;
+  const spacing = 1.2 / (reels.length + 1);
+  reels.forEach((r, i) => {
+    const x = -1.2 / 2 + spacing * (i + 1);
+    const plate = buildDigitPlate(ALPHABET[r.letterIndex]);
+    plate.position.set(x, 0, 0.03);
+    mount.group.add(plate);
+    mount.reelIndex[i] = { plate, letterIndex: r.letterIndex };
+  });
+}
+
+function updatePasswordPlate(mount, i, letterIndex) {
+  const entry = mount.reelIndex[i];
+  if (!entry || entry.letterIndex === letterIndex) return;
+  const x = entry.plate.position.x, z = entry.plate.position.z;
+  mount.group.remove(entry.plate);
+  const plate = buildDigitPlate(ALPHABET[letterIndex]);
+  plate.position.set(x, 0, z);
+  mount.group.add(plate);
+  mount.reelIndex[i] = { plate, letterIndex };
+}
+
+const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+
 function moduleSignature(mod) {
   if (mod.moduleType === 'wire_cut') return 'wire_cut:' + (mod.wires || []).map((w) => w.id).join(',');
   if (mod.moduleType === 'handshake_grid' && mod.grid) return 'handshake_grid:' + mod.grid.nodes.map((n) => n.id).join(',');
   if (mod.moduleType === 'frequency_lock' && mod.freq) return 'frequency_lock:' + mod.freq.channelLabel;
+  if (mod.moduleType === 'signal_decode' && mod.signal) return 'signal_decode:' + mod.signal.buttonColors.join(',') + ':' + mod.signal.signals.length;
+  if (mod.moduleType === 'password_lock' && mod.password) return 'password_lock:' + mod.password.reels.length;
   return mod.moduleType || '';
 }
 
@@ -1255,6 +1401,8 @@ function sync(mountEl, view, actions) {
       if (mod.moduleType === 'wire_cut') buildWireCutInMount(mount, mod.wires || []);
       else if (mod.moduleType === 'handshake_grid' && mod.grid) buildHandshakeInMount(mount, mod.grid);
       else if (mod.moduleType === 'frequency_lock' && mod.freq) buildFrequencyInMount(mount, mod.freq);
+      else if (mod.moduleType === 'signal_decode' && mod.signal) buildSignalInMount(mount, mod.signal);
+      else if (mod.moduleType === 'password_lock' && mod.password) buildPasswordInMount(mount, mod.password);
     } else if (mod.moduleType === 'wire_cut') {
       for (const w of mod.wires || []) {
         const entry = mount.wireIndex[w.id];
@@ -1273,6 +1421,8 @@ function sync(mountEl, view, actions) {
       }
     } else if (mod.moduleType === 'frequency_lock' && mod.freq && mount.dial) {
       mount.dial.needlePivot.rotation.z = valueToAngle(mod.freq.dialValue);
+    } else if (mod.moduleType === 'password_lock' && mod.password) {
+      mod.password.reels.forEach((r, i) => updatePasswordPlate(mount, i, r.letterIndex));
     }
   }
 
