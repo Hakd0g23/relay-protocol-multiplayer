@@ -1233,10 +1233,17 @@ const routes = {
 
     req.on('close', () => {
       clearInterval(keepAlive);
-      room.connections.delete(playerId);
-      const p = room.players.get(playerId);
-      if (p) p.connected = false;
-      broadcast(room);
+      // A reconnect (page refresh, or the client's own error-triggered
+      // EventSource retry) opens a new stream for the same playerId before
+      // the old one's socket finishes tearing down. Only clear state if
+      // this closing connection is still the one on record — otherwise a
+      // late close from the OLD connection would wrongly evict the new one.
+      if (room.connections.get(playerId) === res) {
+        room.connections.delete(playerId);
+        const p = room.players.get(playerId);
+        if (p) p.connected = false;
+        broadcast(room);
+      }
     });
   },
 };
