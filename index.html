@@ -167,6 +167,16 @@
   .submit-password-btn { width: 100%; margin-top: 0.6rem; }
   .maze-pad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.4rem; max-width: 220px; margin: 0.6rem auto; }
   .maze-btn { min-height: 48px; }
+  .morse-table {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(52px, 1fr)); gap: 0.3rem;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 0.6rem; margin: 0.5rem 0;
+  }
+  .morse-cell {
+    display: flex; flex-direction: column; align-items: center; gap: 0.1rem;
+    border: 1px solid var(--border); border-radius: 6px; padding: 0.3rem 0.15rem; background: var(--bg);
+  }
+  .morse-letter { font-family: var(--font-display); font-weight: 800; font-size: 1rem; }
+  .morse-code { font-family: var(--font-mono); letter-spacing: 0.12em; color: var(--muted); font-size: 0.9rem; }
   .log { font-family: var(--font-mono); max-height: 140px; overflow-y: auto; font-size: 0.85rem; border-top: 1px solid var(--border); padding-top: 0.5rem; }
   .log div { padding: 0.15rem 0; color: var(--muted); }
   .banner { padding: 0.75rem; border-radius: 8px; margin-bottom: 1rem; font-weight: 600; text-align: center; }
@@ -228,6 +238,8 @@
     diamond: '<svg viewBox="0 0 40 40" class="wire-shape" aria-hidden="true"><polygon points="20,4 36,20 20,36 4,20" fill="currentColor"/></svg>',
     star: '<svg viewBox="0 0 40 40" class="wire-shape" aria-hidden="true"><polygon points="20,3 24,15 37,15 26,23 30,35 20,27 10,35 14,23 3,15 16,15" fill="currentColor"/></svg>'
   };
+
+  const DIFFICULTY_LABELS = { easy: 'Easy', medium: 'Medium', hard: 'Hard' };
 
   const ROLE_INFO = {
     operator: {
@@ -337,6 +349,16 @@
           </div>
         </fieldset>
 
+        <fieldset>
+          <legend>Difficulty</legend>
+          <div class="row" role="radiogroup" aria-label="Difficulty">
+            <label><input type="radio" name="difficulty" value="easy"> Easy</label>
+            <label><input type="radio" name="difficulty" value="medium" checked> Medium</label>
+            <label><input type="radio" name="difficulty" value="hard"> Hard</label>
+          </div>
+          <p class="mode-note">Easy: fewer wires/simpler puzzles, more time, softer wrong-action penalty. Hard: the opposite. Only set when creating a new room — joining an existing room uses its difficulty.</p>
+        </fieldset>
+
         <button id="join-btn" type="button">Join / Create Room</button>
         <p id="join-error" role="alert" style="color:var(--danger)"></p>
       </div>
@@ -346,9 +368,10 @@
       const roomId = document.getElementById('room-input').value.trim();
       const mode = Number(document.querySelector('input[name=mode]:checked').value);
       const playStyle = document.querySelector('input[name=playStyle]:checked').value;
+      const difficulty = document.querySelector('input[name=difficulty]:checked').value;
       localStorage.setItem('relay-name', name);
       try {
-        const data = await api('/api/room/join', { name, roomId, mode, playStyle });
+        const data = await api('/api/room/join', { name, roomId, mode, playStyle, difficulty });
         state.roomId = data.roomId;
         state.playerId = data.playerId;
         state.mode = data.mode;
@@ -368,7 +391,7 @@
     return `
       <div class="card">
         <h2>Room ${escapeHtml(view.roomId)}</h2>
-        <p>Share this room code with your teammate${view.mode === 3 ? 's' : ''}. ${view.mode}-player mode.</p>
+        <p>Share this room code with your teammate${view.mode === 3 ? 's' : ''}. ${view.mode}-player mode &mdash; <strong>${DIFFICULTY_LABELS[view.difficulty] || 'Medium'}</strong> difficulty.</p>
         ${renderModeNote(view)}
         ${view.round > 1 ? `<p style="color:var(--warn)">Round ${view.round} — more wires, less time, and new rule types unlock as you win.</p>` : ''}
         <div class="role-grid" role="group" aria-label="Choose your role">
@@ -420,7 +443,7 @@
       <div class="spread-fill" style="width:${view.spread}%"></div>
     </div>
     <p class="spread-label ${breach ? 'breach' : ''}">Spread: ${view.spread}%${breach ? ' — containment breached, ruleset shifted' : ''}</p>
-    <p style="text-align:center;color:var(--muted)">Round ${view.round}${progress ? ' &middot; ' + progress : ''}</p>`;
+    <p style="text-align:center;color:var(--muted)">Round ${view.round} &middot; ${DIFFICULTY_LABELS[view.difficulty] || 'Medium'}${progress ? ' &middot; ' + progress : ''}</p>`;
   }
 
   // Shared read-only single-module panel. Color is always shown now — the
@@ -491,6 +514,7 @@
           <p>Flashed groups: <strong>${ms.signals.join('  /  ')}</strong></p>
           <p>Progress: <strong>${ms.progress}/${ms.signals.length}</strong></p>
         </div>
+        ${renderMorseTable(ms.table)}
       `;
     }
     return '';
@@ -536,6 +560,17 @@
 
   function colorSwatch(color) {
     return `<span class="wire-color-swatch" style="background:${color}" aria-hidden="true"></span>`;
+  }
+
+  // Fixed public Morse reference, rendered as a scannable grid instead of
+  // one long inline string of "A=.- B=-... C=-.-." that was hard to scan
+  // under time pressure.
+  function renderMorseTable(table) {
+    if (!table) return '';
+    const cells = Object.entries(table).map(([letter, code]) => `
+      <div class="morse-cell"><span class="morse-letter">${letter}</span><span class="morse-code">${code}</span></div>
+    `).join('');
+    return `<div class="morse-table" role="table" aria-label="Morse code reference">${cells}</div>`;
   }
 
   function bombKeyBanner(view) {
@@ -636,6 +671,7 @@
       const ms = mod.morse;
       return `
         <p>Flashed groups: <strong>${ms.signals.join('  /  ')}</strong> &mdash; progress ${ms.progress}/${ms.signals.length}</p>
+        ${renderMorseTable(ms.table)}
         <div class="symbol-grid" role="group" aria-label="Letter keypad">
           ${ALPHABET.split('').map((l) => `<button class="symbol-btn morse-btn" data-letter="${l}" data-face="${mod.face}" ${!active ? 'disabled' : ''} aria-label="Press letter ${l}">${l}</button>`).join('')}
         </div>

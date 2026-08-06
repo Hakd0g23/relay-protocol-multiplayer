@@ -46,14 +46,32 @@ const MIN_TIMER_SECONDS = 75;
 const LOOKUP_TIME_BONUS = 15; // extra seconds per manual-lookup module — those take real decode time
 const CONTAINMENT_THRESHOLD = 50; // spread % at which the ruleset shifts once
 
+// Difficulty is a per-room setting chosen at creation (like mode/playStyle).
+// ROUND_OFFSET reuses every existing round-scaling formula above by shifting
+// the round number fed into it — Easy plays like a room that's behind where
+// it "should" be, Hard like one that's further ahead. PENALTY_MULT scales
+// how much a wrong action actually costs.
+const DIFFICULTIES = ['easy', 'medium', 'hard'];
+const DIFFICULTY_ROUND_OFFSET = { easy: -3, medium: 0, hard: 5 };
+const DIFFICULTY_PENALTY_MULT = { easy: 0.7, medium: 1, hard: 1.35 };
+
+function effectiveRound(room) {
+  return room.round + (DIFFICULTY_ROUND_OFFSET[room.difficulty] || 0);
+}
+
 // Difficulty scales with round number: more wires, a shorter clock, and a
 // wider variant pool unlock as the room clears more bombs in a row.
+// Difficulty mode shifts the round number fed into every one of these
+// formulas (see DIFFICULTY_ROUND_OFFSET below), which can push it negative
+// for Easy — clamp each formula's own range rather than the round itself,
+// so Easy round 1 is actually easier than normal round 1, not just "normal
+// round 1 minus growth that was already floored away."
 function wireCountForRound(round) {
-  return Math.min(WIRE_COUNT + Math.floor((round - 1) / 2), MAX_WIRE_COUNT);
+  return Math.max(4, Math.min(WIRE_COUNT + Math.floor((round - 1) / 2), MAX_WIRE_COUNT));
 }
 
 function timerForRound(round) {
-  return Math.max(TIMER_SECONDS - (round - 1) * 3, MIN_TIMER_SECONDS);
+  return Math.min(Math.max(TIMER_SECONDS - (round - 1) * 3, MIN_TIMER_SECONDS), 150);
 }
 
 function variantPoolForRound(round) {
@@ -311,7 +329,7 @@ function generateHandshakeModule(round = 1, bombKey = 'AAAAAA') {
 // ---- Frequency Lock: a continuous dial instead of discrete wires/nodes ----
 
 function bandWidthForRound(round) {
-  return Math.max(20 - (round - 1) * 2, 8);
+  return Math.max(8, Math.min(20 - (round - 1) * 2, 40));
 }
 
 // KTANE's Frequencies module structure: decode a condition, look up the
@@ -370,7 +388,7 @@ function generateFrequencyModule(round = 1, bombKey = 'AAAAAA') {
 // interpret, translated through a manual-held lookup table -----------------
 
 function signalLengthForRound(round) {
-  return Math.min(3 + Math.floor((round - 1) / 2), 6);
+  return Math.max(3, Math.min(3 + Math.floor((round - 1) / 2), 6));
 }
 
 // KTANE's Simon Says structure: the sighted role never gets a resolved
@@ -564,13 +582,12 @@ function generateMorseModule(round = 1) {
   const word = pick(morseWordLengthForRound(round));
   const letters = word.split('');
   const signals = letters.map((l) => MORSE_MAP[l]);
-  const table = Object.entries(MORSE_MAP).map(([l, code]) => `${l}=${code}`).join(' ');
   return {
     moduleType: 'morse_relay',
     letters,
     signals,
     progress: 0,
-    ruleText: `Standard Morse reference (public, same every round): ${table}. Decode each flashed group in order using this table, then have the Operator press that letter on the keypad.`,
+    ruleText: 'Standard Morse reference (see table below, public, same every round). Decode each flashed group in order, then have the Operator press that letter on the keypad.',
   };
 }
 
@@ -699,10 +716,11 @@ function breachAllModules(room) {
 // ---- Room model -------------------------------------------------------
 
 class Room {
-  constructor(id, mode, playStyle) {
+  constructor(id, mode, playStyle, difficulty) {
     this.id = id;
     this.mode = mode; // 2 or 3
     this.playStyle = playStyle === 'local' ? 'local' : 'online'; // 'local' = players together in person
+    this.difficulty = DIFFICULTIES.includes(difficulty) ? difficulty : 'medium';
     this.players = new Map(); // playerId -> {id, name, role, connected}
     this.status = 'lobby'; // lobby | active | won | lost
     this.modules = []; // active modules this round, each on a distinct cube face
@@ -736,10 +754,10 @@ class Room {
 
 }
 
-function getOrCreateRoom(id, mode, playStyle) {
+function getOrCreateRoom(id, mode, playStyle, difficulty) {
   let room = rooms.get(id);
   if (!room) {
-    room = new Room(id, mode || 2, playStyle);
+    room = new Room(id, mode || 2, playStyle, difficulty);
     rooms.set(id, room);
   }
   return room;
@@ -765,6 +783,7 @@ function buildView(room, playerId) {
     roomId: room.id,
     mode: room.mode,
     playStyle: room.playStyle,
+    difficulty: room.difficulty,
     status: room.status,
     players: publicPlayers(room),
     availableRoles: room.availableRoles(),
@@ -843,7 +862,10 @@ function buildModuleView(m, { showRule }) {
     out.maze = { size: m.size, pos: m.pos, goal: m.goal };
     if (showRule) out.ruleText = m.ruleText;
   } else if (m.moduleType === 'morse_relay') {
-    out.morse = { signals: m.signals, progress: m.progress };
+    // The Morse alphabet is fixed and public (same table every round, like
+    // the frequency dial's zone letters) — send it structured so the client
+    // can render a real scannable grid instead of one long inline string.
+    out.morse = { signals: m.signals, progress: m.progress, table: MORSE_MAP };
     if (showRule) out.ruleText = m.ruleText;
   }
   return out;
@@ -911,8 +933,9 @@ const routes = {
     const roomId = requestedRoomId || newId(3).toUpperCase();
     const mode = body.mode === 3 ? 3 : 2;
     const playStyle = body.playStyle === 'local' ? 'local' : 'online';
+    const difficulty = DIFFICULTIES.includes(body.difficulty) ? body.difficulty : 'medium';
     const name = (body.name || 'Player').replace(/[<>]/g, '').slice(0, 24) || 'Player';
-    const room = getOrCreateRoom(roomId, mode, playStyle);
+    const room = getOrCreateRoom(roomId, mode, playStyle, difficulty);
     if (room.players.size >= room.mode && ![...room.players.values()].some(p => p.name === name)) {
       // allow rejoin by same connection later via playerId; block brand-new joins once full
     }
@@ -921,7 +944,7 @@ const routes = {
     }
     const playerId = newId(6);
     room.players.set(playerId, { id: playerId, name, role: null, connected: false });
-    sendJson(res, 200, { roomId: room.id, playerId, mode: room.mode, playStyle: room.playStyle });
+    sendJson(res, 200, { roomId: room.id, playerId, mode: room.mode, playStyle: room.playStyle, difficulty: room.difficulty });
   },
 
   async 'POST /api/room/role'(req, res) {
@@ -952,7 +975,8 @@ const routes = {
       return sendJson(res, 400, { error: 'Every role must be filled before starting.' });
     }
     room.bombKey = generateBombKey();
-    room.modules = generateModules(room.round, room.bombKey);
+    const effRound = effectiveRound(room);
+    room.modules = generateModules(effRound, room.bombKey);
     // Same flat bonus for any module that takes real extra relay time to
     // execute, not just the ones phrased as a decision-tree lookup: Maze
     // needs turn-by-turn verbal guidance across several moves, and Morse
@@ -961,7 +985,7 @@ const routes = {
     const heavyModuleCount = room.modules.filter((m) =>
       (m.ruleText && m.ruleText.includes('MANUAL LOOKUP')) || m.moduleType === 'maze' || m.moduleType === 'morse_relay'
     ).length;
-    room.timerDuration = timerForRound(room.round) + heavyModuleCount * LOOKUP_TIME_BONUS;
+    room.timerDuration = timerForRound(effRound) + heavyModuleCount * LOOKUP_TIME_BONUS;
     room.startedAt = Date.now();
     room.status = 'active';
     room.spread = 0;
@@ -1293,9 +1317,10 @@ const routes = {
 // and triggers the one-time containment breach (on every unsolved module)
 // once spread crosses threshold.
 function applyWrongAction(room) {
+  const mult = DIFFICULTY_PENALTY_MULT[room.difficulty] || 1;
   const before = room.spread;
-  room.spread = Math.min(100, room.spread + 14 + Math.floor(Math.random() * 8)); // +14-21%
-  room.startedAt -= 8000; // 8s time penalty
+  room.spread = Math.min(100, room.spread + (14 + Math.floor(Math.random() * 8)) * mult); // +14-21%, scaled by difficulty
+  room.startedAt -= 8000 * mult; // 8s time penalty, scaled by difficulty
   if (before < CONTAINMENT_THRESHOLD && room.spread >= CONTAINMENT_THRESHOLD) {
     breachAllModules(room);
   }
